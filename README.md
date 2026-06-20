@@ -1,14 +1,13 @@
 # Evomem
 
-**Knowledge infrastructure for AI agents: markdown memory repo, hybrid retrieval, self-wiring knowledge graph.**
+**Knowledge infrastructure for AI agents**, because knowledge is power, and power need knowledge.
 
 Evomem is a CLI tool, server, and embeddable library that turns a directory of markdown files into a queryable "knowledge" inspired by [gbrain](https://github.com/garrytan/gbrain) and [Obsidian](https://obsidian.md/), combining lexical search, hash-based vector embeddings, and typed knowledge graphs with zero LLM dependency at query time. It gives AI agents persistent, structured memory without the cost, latency, or unpredictability of calling an LLM for every retrieval.
 
-It is **blazingly fast** — queries complete in under 45 ms even at 1,000 pages, full re-sync takes ~1.3 ms per page, and the binary is a compact 8 MB with no runtime dependencies.
+It is **blazingly fast**, can complete query in under 45ms for 1,000 pages, full re-sync takes ~1.3 ms per page, and the binary is a compact 8 MB with no runtime dependencies.
 
 The design is minimal by choice. Your knowledge is just markdown files in a git repo — easy to edit, diff, backup, and version. Write your notes, capture thoughts with `evomem capture`, and the system handles indexing, ranking, and graph traversal automatically.
 
-Because knowledge is power, and power need knowledge.
 
 
 ## How it works
@@ -181,7 +180,7 @@ This approach gives deterministic, explainable ranking — every result position
 
 ## Performance
 
-Benchmarks run on Apple M3 Pro (18 GB) against synthetic markdown corpora using the native release binary. Times are **mean across 5 queries** with cold cache (no OS page cache warm-up). All retrieval is deterministic — no LLM calls at query time.
+Benchmarks run on Apple M3 Pro (18 GB) against synthetic markdown corpora using the native release binary. Times are **mean across 5 queries** with cold cache (no OS page cache warm-up). All retrieval is deterministic, no LLM calls at query time.
 
 ### Query latency vs. knowledge base size
 
@@ -200,16 +199,6 @@ Key takeaways:
 - **Graph queries** are near-constant (~3 ms) regardless of corpus size — adjacency lookups are index-only.
 - **Sync time** scales linearly, ~1.3 ms per page on this hardware. For a 100-page notebook, the full re-index costs less than 0.1 s.
 - The **~5 ms floor** across small corpora is CLI startup overhead (arg parsing, DB open, etc.). In server mode this disappears — queries route through a persistent process.
-
-### Cross-compiled binary size
-
-| Target                    | Binary | Compressed (zip) |
-|---------------------------|-------:|-----------------:|
-| `x86_64-unknown-linux-musl` | 7.9 MB | 3.7 MB           |
-| `aarch64-apple-darwin`      | 8.0 MB | 3.7 MB           |
-| `x86_64-apple-darwin`       | 8.5 MB | 3.9 MB           |
-
-All targets build with `make dist` (requires `cargo-zigbuild`).
 
 ## Build
 
