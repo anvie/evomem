@@ -1,0 +1,34 @@
+[package]
+name = "evomem"
+version = "0.1.0"
+edition = "2021"
+description = "Knowledge infrastructure for AI agents: markdown memory repo, hybrid retrieval, self-wiring knowledge graph"
+license = "MIT"
+
+[dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
+clap = { version = "4", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1"
+regex = "1"
+walkdir = "2"
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2"
+anyhow = "1"
+blake3 = "1"
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "signal"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+lru = "0.12"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = true
+
+
+
+
+
