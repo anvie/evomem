@@ -2,7 +2,7 @@
 
 **Knowledge infrastructure for AI agents: markdown memory repo, hybrid retrieval, self-wiring knowledge graph.**
 
-Evomem is a CLI tool, server, and embeddable library that turns a directory of markdown files into a queryable "knowledge" inspired by gbrain [gbrain](https://github.com/garrytan/gbrain) and [Obsidian](https://obsidian.md/), combining lexical search, hash-based vector embeddings, and typed knowledge graphs with zero LLM dependency at query time. It gives AI agents persistent, structured memory without the cost, latency, or unpredictability of calling an LLM for every retrieval.
+Evomem is a CLI tool, server, and embeddable library that turns a directory of markdown files into a queryable "knowledge" inspired by [gbrain](https://github.com/garrytan/gbrain) and [Obsidian](https://obsidian.md/), combining lexical search, hash-based vector embeddings, and typed knowledge graphs with zero LLM dependency at query time. It gives AI agents persistent, structured memory without the cost, latency, or unpredictability of calling an LLM for every retrieval.
 
 The design is minimal by choice. Your knowledge is just markdown files in a git repo — easy to edit, diff, backup, and version. Write your notes, capture thoughts with `evomem capture`, and the system handles indexing, ranking, and graph traversal automatically.
 
