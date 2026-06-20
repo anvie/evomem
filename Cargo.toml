@@ -1,6 +1,6 @@
 [package]
 name = "evomem"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Knowledge infrastructure for AI agents: markdown memory repo, hybrid retrieval, self-wiring knowledge graph"
 license = "MIT"
