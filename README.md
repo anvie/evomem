@@ -4,6 +4,8 @@
 
 Evomem is a CLI tool, server, and embeddable library that turns a directory of markdown files into a queryable "knowledge" inspired by [gbrain](https://github.com/garrytan/gbrain) and [Obsidian](https://obsidian.md/), combining lexical search, hash-based vector embeddings, and typed knowledge graphs with zero LLM dependency at query time. It gives AI agents persistent, structured memory without the cost, latency, or unpredictability of calling an LLM for every retrieval.
 
+It is **blazingly fast** — queries complete in under 45 ms even at 1,000 pages, full re-sync takes ~1.3 ms per page, and the binary is a compact 8 MB with no runtime dependencies.
+
 The design is minimal by choice. Your knowledge is just markdown files in a git repo — easy to edit, diff, backup, and version. Write your notes, capture thoughts with `evomem capture`, and the system handles indexing, ranking, and graph traversal automatically.
 
 Because knowledge is power, and power need knowledge.
@@ -177,6 +179,38 @@ This approach gives deterministic, explainable ranking — every result position
 | `graph_adjacent` | Adjacent in the knowledge graph |
 | `weak_semantic` | Weak vector/semantic match |
 
+## Performance
+
+Benchmarks run on Apple M3 Pro (18 GB) against synthetic markdown corpora using the native release binary. Times are **mean across 5 queries** with cold cache (no OS page cache warm-up). All retrieval is deterministic — no LLM calls at query time.
+
+### Query latency vs. knowledge base size
+
+| KB size | DB size | init | sync | search (conserv.) | search (balanced) | search (tokenmax) | think | graph-query |
+|--------:|--------:|-----:|-----:|------------------:|------------------:|------------------:|------:|------------:|
+| 10      | 312 KB  | 19ms | 18ms | 9ms               | 8ms               | 5ms               | 7ms   | 3ms         |
+| 50      | 1.3 MB  |  5ms | 38ms | 7ms               | 8ms               | 6ms               | 6ms   | 3ms         |
+| 100     | 2.6 MB  |  6ms | 71ms | 9ms               | 11ms              | 9ms               | 8ms   | 3ms         |
+| 500     | 13 MB   |  6ms | 559ms| 22ms              | 21ms              | 22ms              | 23ms  | 4ms         |
+| 1,000   | 26 MB   |  6ms | 1.3s | 42ms              | 40ms              | 39ms              | 38ms  | 3ms         |
+
+Key takeaways:
+
+- **Search latency** stays under **45ms** even at 1,000 pages / 26 MB — dominated by hybrid fusion (lexical + vector + graph re-rank).
+- **Think latency** (synthesis with gap analysis) is within 1–2 ms of plain search — the overhead is negligible.
+- **Graph queries** are near-constant (~3 ms) regardless of corpus size — adjacency lookups are index-only.
+- **Sync time** scales linearly, ~1.3 ms per page on this hardware. For a 100-page notebook, the full re-index costs less than 0.1 s.
+- The **~5 ms floor** across small corpora is CLI startup overhead (arg parsing, DB open, etc.). In server mode this disappears — queries route through a persistent process.
+
+### Cross-compiled binary size
+
+| Target                    | Binary | Compressed (zip) |
+|---------------------------|-------:|-----------------:|
+| `x86_64-unknown-linux-musl` | 7.9 MB | 3.7 MB           |
+| `aarch64-apple-darwin`      | 8.0 MB | 3.7 MB           |
+| `x86_64-apple-darwin`       | 8.5 MB | 3.9 MB           |
+
+All targets build with `make dist` (requires `cargo-zigbuild`).
+
 ## Build
 
 ```bash
@@ -188,8 +222,13 @@ make fmt          # cargo fmt --check
 make fmt-fix      # cargo fmt
 
 # Cross-compile (requires cargo-zigbuild)
-make build-linux      # x86_64-unknown-linux-musl (fully static)
+make build-linux-musl # x86_64-unknown-linux-musl (fully static)
 make build-linux-gnu  # x86_64-unknown-linux-gnu
+make build-darwin-arm # aarch64-apple-darwin
+make build-darwin-x64 # x86_64-apple-darwin
+
+# Distribution packages (all targets, versioned .zip)
+make dist
 ```
 
 ## License
