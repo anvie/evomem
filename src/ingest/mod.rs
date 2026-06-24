@@ -310,8 +310,3 @@ mod tests {
         assert_eq!(slug_for(root, Path::new("/brain/notes/x.txt")), None);
     }
 }
-
-
-
-
-

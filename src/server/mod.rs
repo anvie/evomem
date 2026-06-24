@@ -318,8 +318,3 @@ mod tests {
         assert_eq!(*lock(&m), 7, "lock() must recover the value");
     }
 }
-
-
-
-
-

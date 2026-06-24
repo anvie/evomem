@@ -407,8 +407,3 @@ mod tests {
         assert_eq!(percent_decode("a%zzb"), "a%zzb");
     }
 }
-
-
-
-
-

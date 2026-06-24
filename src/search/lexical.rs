@@ -3,7 +3,7 @@
 //!
 //! 1. words — documents matching more query words win outright.
 //! 2. IDF — *upgrade*: among equal word counts, matching rarer (more
-//!    discriminative) query words wins. 
+//!    discriminative) query words wins.
 //! 3. typo — fewer/cheaper corrections win. *Upgrade*: a graded cost scale —
 //!    exact 0 < stem match 1 < one typo 2 < two typos 4 — recovers stemming
 //!    ("returns" ~ "returned") lost with FTS5's porter tokenizer, while still
@@ -16,7 +16,7 @@
 //! 6. exactness — exact word matches beat prefix/stem/typo-derived ones.
 //!
 //! Query words resolve against the indexed vocabulary with bounded
-//! Levenshtein; 
+//! Levenshtein;
 //! the last query word also matches as a prefix. Candidates come from our
 //! own `word_index` postings — no FTS5 involved. Everything is deterministic:
 //! same knowledge store + same query = same ranking, and every position is explainable
@@ -519,8 +519,3 @@ mod tests {
         assert_eq!(top_slug(&store, "dark"), "notes/dark-knight");
     }
 }
-
-
-
-
-

@@ -263,8 +263,3 @@ fn snippet_of(text: &str) -> String {
     }
     format!("{}…", &trimmed[..end])
 }
-
-
-
-
-

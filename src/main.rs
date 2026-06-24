@@ -281,8 +281,3 @@ fn render_stats(s: &StatsResponse) {
         }
     }
 }
-
-
-
-
-

@@ -113,8 +113,3 @@ impl RemoteClient {
         self.post("/api/sync", &serde_json::json!({}))
     }
 }
-
-
-
-
-

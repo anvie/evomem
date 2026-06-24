@@ -132,8 +132,3 @@ mod tests {
         assert_ne!(stem("acme"), stem("act"));
     }
 }
-
-
-
-
-

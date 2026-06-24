@@ -39,8 +39,3 @@ pub fn stats(store: &Store) -> Result<StatsResponse> {
         last_synced_at: store.get_meta("last_synced_at")?,
     })
 }
-
-
-
-
-

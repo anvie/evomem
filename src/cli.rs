@@ -10,7 +10,13 @@ use crate::model::Mode;
 )]
 pub struct Cli {
     /// Knowledge root directory (default: current dir, or $EVOMEM_ROOT)
-    #[arg(long, alias = "brain", global = true, env = "EVOMEM_ROOT", default_value = ".")]
+    #[arg(
+        long,
+        alias = "brain",
+        global = true,
+        env = "EVOMEM_ROOT",
+        default_value = "."
+    )]
     pub knowledge: String,
 
     /// Run against a remote evomem server instead of the local database
@@ -94,8 +100,3 @@ impl clap::builder::ValueParserFactory for Mode {
         clap::builder::ValueParser::new(|s: &str| s.parse::<Mode>())
     }
 }
-
-
-
-
-

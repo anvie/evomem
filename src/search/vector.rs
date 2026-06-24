@@ -33,8 +33,3 @@ pub fn search(
     hits.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
     Ok(hits)
 }
-
-
-
-
-

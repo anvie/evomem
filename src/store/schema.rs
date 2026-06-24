@@ -77,8 +77,3 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     )?;
     Ok(())
 }
-
-
-
-
-

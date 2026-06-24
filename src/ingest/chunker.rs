@@ -177,8 +177,3 @@ mod tests {
         assert_eq!(chunks[0].heading_path, "");
     }
 }
-
-
-
-
-

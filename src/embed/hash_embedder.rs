@@ -111,8 +111,3 @@ mod tests {
         assert_eq!(e.embed("").unwrap(), vec![0f32; EMBED_DIM]);
     }
 }
-
-
-
-
-

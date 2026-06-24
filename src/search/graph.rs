@@ -174,8 +174,3 @@ pub fn traverse(
     }
     Ok(edges)
 }
-
-
-
-
-

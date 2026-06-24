@@ -177,8 +177,3 @@ mod tests {
         assert!(!starts_with_sentence_leader("Acme Corp"));
     }
 }
-
-
-
-
-
