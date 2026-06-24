@@ -20,13 +20,19 @@ impl Store {
     /// Replace all outgoing links for a page, resolving destinations that
     /// already exist; unresolved ones stay dangling (dst_page_id NULL) and are
     /// re-resolved at the end of every sync.
+    ///
+    /// Resolution tries exact slug first, then `{slug}/index` to support wiki-
+    /// links to directory index pages (e.g. `[[kb/my-session]]` → slug `index`).
     pub fn replace_links_for_page(&self, src_page_id: i64, drafts: &[LinkDraft]) -> Result<()> {
         self.conn
             .execute("DELETE FROM links WHERE src_page_id = ?1", [src_page_id])?;
         let mut stmt = self.conn.prepare_cached(
             "INSERT INTO links (src_page_id, dst_slug, dst_page_id, edge_type, anchor_text)
              VALUES (?1, ?2,
-                     (SELECT id FROM pages WHERE slug = ?2 AND deleted_at IS NULL),
+                     COALESCE(
+                       (SELECT id FROM pages WHERE slug = ?2 AND deleted_at IS NULL),
+                       (SELECT id FROM pages WHERE slug = ?2 || '/index' AND deleted_at IS NULL)
+                     ),
                      ?3, ?4)
              ON CONFLICT(src_page_id, dst_slug, edge_type) DO NOTHING",
         )?;
@@ -42,12 +48,18 @@ impl Store {
     }
 
     /// Re-resolve dangling links after a sync (targets may have appeared).
+    ///
+    /// Tries exact slug match first, then `{slug}/index` for directory index pages.
     pub fn resolve_dangling_links(&self) -> Result<usize> {
         let n = self.conn.execute(
             "UPDATE links SET dst_page_id =
-               (SELECT id FROM pages WHERE slug = links.dst_slug AND deleted_at IS NULL)
+               COALESCE(
+                 (SELECT id FROM pages WHERE slug = links.dst_slug AND deleted_at IS NULL),
+                 (SELECT id FROM pages WHERE slug = links.dst_slug || '/index' AND deleted_at IS NULL)
+               )
              WHERE dst_page_id IS NULL
-               AND EXISTS (SELECT 1 FROM pages WHERE slug = links.dst_slug AND deleted_at IS NULL)",
+               AND (EXISTS (SELECT 1 FROM pages WHERE slug = links.dst_slug AND deleted_at IS NULL)
+                    OR EXISTS (SELECT 1 FROM pages WHERE slug = links.dst_slug || '/index' AND deleted_at IS NULL))",
             [],
         )?;
         Ok(n)

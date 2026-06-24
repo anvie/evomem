@@ -157,6 +157,48 @@ fn typo_and_stem_queries_still_hit() {
 }
 
 #[test]
+fn directory_index_link_resolution() {
+    let f = setup();
+    // Create a directory index page: docs/api/index.md
+    write(
+        f.store.brain_root.as_path(),
+        "docs/api/index.md",
+        "---\ntitle: API Documentation\ntype: doc\n---\n# API Docs\nInternal API reference for the platform.\n",
+    );
+    // Create a page linking to the directory WITHOUT /index
+    write(
+        f.store.brain_root.as_path(),
+        "people/linker.md",
+        "---\ntitle: Linker Test\ntype: person\n---\nSee [[docs/api]] for the full API reference.\n",
+    );
+    let report = ingest::sync_dir(&f.store, &f.embedder).unwrap();
+    assert_eq!(report.added, 2, "directory + linker page added");
+
+    // The link [[docs/api]] should resolve to docs/api/index.
+    // Use store.neighbors() which returns EdgeRow with dst_page_id.
+    let linker = f.store.resolve_page("Linker Test").unwrap().unwrap();
+    let edges = f.store.neighbors(linker.id, None).unwrap();
+    let api_edge = edges.iter().find(|e| e.dst_slug == "docs/api");
+    assert!(
+        api_edge.is_some(),
+        "link to docs/api not found in edges: {edges:?}"
+    );
+    assert!(
+        api_edge.unwrap().dst_page_id.is_some(),
+        "dst_page_id is NULL — /index fallback failed for [[docs/api]]"
+    );
+
+    // Verify the resolved page is the index page
+    let api_page = f
+        .store
+        .get_page_by_id(api_edge.unwrap().dst_page_id.unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(api_page.slug, "docs/api/index");
+    assert_eq!(api_page.title, "API Documentation");
+}
+
+#[test]
 fn graph_has_typed_edges_and_traverses() {
     let f = setup();
     let alice = f.store.resolve_page("Alice Chen").unwrap().unwrap();
