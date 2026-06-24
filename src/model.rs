@@ -27,6 +27,8 @@ pub struct Frontmatter {
     pub title: Option<String>,
     #[serde(rename = "type", default, deserialize_with = "lenient_string")]
     pub page_type: Option<String>,
+    #[serde(default, deserialize_with = "lenient_string")]
+    pub description: Option<String>,
     #[serde(default, deserialize_with = "string_or_seq")]
     pub aliases: Vec<String>,
     #[serde(default, deserialize_with = "string_or_seq")]

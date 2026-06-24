@@ -235,11 +235,11 @@ fn case_collisions(slugs: &[String]) -> Vec<String> {
     out
 }
 
-fn is_hidden(name: &str) -> bool {
+pub(crate) fn is_hidden(name: &str) -> bool {
     name.starts_with('.') && name != "." && name != ".."
 }
 
-fn slug_for(root: &Path, path: &Path) -> Option<String> {
+pub(crate) fn slug_for(root: &Path, path: &Path) -> Option<String> {
     let rel = path.strip_prefix(root).ok()?;
     let s = rel.to_string_lossy().replace('\\', "/");
     let stem = s

@@ -465,7 +465,73 @@ fn temporal_intent_lets_chat_pages_surface() {
 
 use chrono::TimeZone;
 
+// ── KB frontmatter validation ────────────────────────────────────────────
 
+fn setup_kb_validate() -> (tempfile::TempDir, Store) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    // Valid KB file.
+    write(
+        root,
+        "kb/good.md",
+        "---\ntitle: Good\ndescription: A valid note\ntype: note\n---\nbody\n",
+    );
+    // Missing `type`.
+    write(
+        root,
+        "kb/missing-type.md",
+        "---\ntitle: NoType\ndescription: Has no type\n---\nbody\n",
+    );
+    // Invalid `type`.
+    write(
+        root,
+        "kb/bad-type.md",
+        "---\ntitle: BadType\ndescription: Wrong type\ntype: log\n---\nbody\n",
+    );
+    // Non-KB page (entities/) must be ignored by validate.
+    write(
+        root,
+        "entities/acme.md",
+        "---\ntitle: Acme\ntype: entity\n---\nbody\n",
+    );
+    let embedder = HashEmbedder;
+    let store = Store::init(root, embedder.id(), embedder.dim()).unwrap();
+    (dir, store)
+}
 
+#[test]
+fn validate_all_scopes_to_kb_and_flags_invalid() {
+    let (_dir, store) = setup_kb_validate();
+    let report = evomem::validate::run(&store, None, None, true).unwrap();
+    // 3 kb files checked; entities/acme.md skipped.
+    assert_eq!(report.checked, 3);
+    assert_eq!(report.valid, 1);
+    assert_eq!(report.invalid, 2);
+    let paths: Vec<&str> = report.issues.iter().map(|i| i.path.as_str()).collect();
+    assert!(paths.contains(&"kb/missing-type.md"));
+    assert!(paths.contains(&"kb/bad-type.md"));
+    assert!(!paths.iter().any(|p| p.starts_with("entities/")));
+}
 
+#[test]
+fn validate_single_file() {
+    let (dir, store) = setup_kb_validate();
+    let path = dir.path().join("kb/bad-type.md");
+    let report = evomem::validate::run(&store, Some(path.to_str().unwrap()), None, true).unwrap();
+    assert_eq!(report.checked, 1);
+    assert_eq!(report.invalid, 1);
+    assert!(report.issues[0].message.contains("log"));
+}
 
+#[test]
+fn validate_since_filters_by_mtime() {
+    let (_dir, store) = setup_kb_validate();
+    // A `since` far in the future excludes every file.
+    let future = "2999-01-01T00:00:00+00:00";
+    let report = evomem::validate::run(&store, None, Some(future), false).unwrap();
+    assert_eq!(report.checked, 0);
+    // A `since` far in the past includes all KB files.
+    let past = "2000-01-01T00:00:00+00:00";
+    let report = evomem::validate::run(&store, None, Some(past), false).unwrap();
+    assert_eq!(report.checked, 3);
+}

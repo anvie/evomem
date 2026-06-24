@@ -66,6 +66,17 @@ pub enum Command {
     },
     /// Show a page's metadata and content
     Page { slug: String },
+    /// Validate KB frontmatter (title, description, type ∈ note|session|group)
+    Validate {
+        /// Validate a single markdown file (overrides the recency filter)
+        path: Option<String>,
+        /// Only validate files modified at/after this RFC3339 timestamp
+        #[arg(long)]
+        since: Option<String>,
+        /// Validate all KB files, ignoring the recency filter
+        #[arg(long)]
+        all: bool,
+    },
     /// Knowledge store statistics
     Stats,
     /// Run as a standalone REST API server

@@ -10,7 +10,8 @@ use evomem::embed::HashEmbedder;
 use evomem::error::EvoError;
 use evomem::ingest::SyncReport;
 use evomem::store::Store;
-use evomem::{capture, config, ingest, search, stats, think};
+use evomem::validate::ValidateReport;
+use evomem::{capture, config, ingest, search, stats, think, validate};
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -20,8 +21,8 @@ fn main() -> anyhow::Result<()> {
     if let Some(base) = &cli.server {
         let client = RemoteClient::new(base);
         match &cli.command {
-            Command::Init | Command::Serve { .. } => {
-                anyhow::bail!("`init` and `serve` run locally; drop --server for them")
+            Command::Init | Command::Serve { .. } | Command::Validate { .. } => {
+                anyhow::bail!("`init`, `serve`, and `validate` run locally; drop --server for them")
             }
             Command::Sync => {
                 let report = client.sync()?;
@@ -141,6 +142,12 @@ fn main() -> anyhow::Result<()> {
                 println!("# {} ({})\n\n{}", page.title, page.slug, content);
             }
         }
+        Command::Validate { path, since, all } => {
+            let store = open(knowledge_root, &embedder)?;
+            let report = validate::run(&store, path.as_deref(), since.as_deref(), *all)
+                .context("validate failed")?;
+            emit(cli.json, &report, render_validate)?;
+        }
         Command::Stats => {
             let store = open(knowledge_root, &embedder)?;
             let resp = stats::stats(&store)?;
@@ -178,6 +185,16 @@ fn render_sync(r: &SyncReport) {
         for issue in &r.errors {
             eprintln!("  ! {}: {}", issue.path, issue.message);
         }
+    }
+}
+
+fn render_validate(r: &ValidateReport) {
+    println!(
+        "validated {} KB file(s): {} valid, {} invalid",
+        r.checked, r.valid, r.invalid
+    );
+    for issue in &r.issues {
+        eprintln!("  ✗ {} — {}", issue.path, issue.message);
     }
 }
 
