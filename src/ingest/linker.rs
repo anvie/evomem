@@ -41,9 +41,9 @@ static EDGE_RULES: LazyLock<Vec<(EdgeType, Regex)>> = LazyLock::new(|| {
     ]
 });
 
-/// Extract typed entity references from a markdown body. `page_dir` is the
-/// slug-directory of the containing page, used to resolve relative targets.
-pub fn extract_links(body: &str, page_dir: &str) -> Vec<LinkDraft> {
+/// Extract typed entity references from a markdown body. `doc_dir` is the
+/// slug-directory of the containing doc, used to resolve relative targets.
+pub fn extract_links(body: &str, doc_dir: &str) -> Vec<LinkDraft> {
     let mut out: Vec<LinkDraft> = Vec::new();
     let scrubbed = strip_code_blocks(body);
 
@@ -54,7 +54,8 @@ pub fn extract_links(body: &str, page_dir: &str) -> Vec<LinkDraft> {
         std::collections::HashSet::new();
     for cap in TYPED_BLOCKQUOTE.captures_iter(&scrubbed) {
         let (raw_type, anchor, target) = (&cap[1], &cap[2], &cap[3]);
-        if let Some(slug) = normalize_slug(page_dir, target) {
+        // Blockquote targets use markdown-link syntax (explicit/relative paths).
+        if let Some(slug) = normalize_slug(doc_dir, target, true) {
             let edge = EdgeType::parse(&raw_type.to_lowercase());
             if explicit.insert((slug.clone(), edge.as_str().to_string())) {
                 out.push(LinkDraft {
@@ -72,9 +73,10 @@ pub fn extract_links(body: &str, page_dir: &str) -> Vec<LinkDraft> {
     let inferred = |anchor: &str,
                     target: &str,
                     at: usize,
+                    prefix_bare: bool,
                     out: &mut Vec<LinkDraft>,
                     seen: &mut std::collections::HashSet<String>| {
-        if let Some(slug) = normalize_slug(page_dir, target) {
+        if let Some(slug) = normalize_slug(doc_dir, target, prefix_bare) {
             let edge = infer_edge_type(context_around(&scrubbed, at));
             if seen.insert(slug.clone()) {
                 out.push(LinkDraft {
@@ -86,12 +88,13 @@ pub fn extract_links(body: &str, page_dir: &str) -> Vec<LinkDraft> {
         }
     };
 
+    // Markdown links are real paths: a bare `[x](note)` is doc-dir-relative.
     for cap in MD_LINK_ANGLE.captures_iter(&scrubbed) {
         let start = cap.get(0).unwrap().start();
         if start > 0 && scrubbed.as_bytes()[start - 1] == b'!' {
             continue; // image
         }
-        inferred(&cap[1], &cap[2], start, &mut out, &mut seen);
+        inferred(&cap[1], &cap[2], start, true, &mut out, &mut seen);
     }
 
     for cap in MD_LINK.captures_iter(&scrubbed) {
@@ -99,14 +102,17 @@ pub fn extract_links(body: &str, page_dir: &str) -> Vec<LinkDraft> {
         if start > 0 && scrubbed.as_bytes()[start - 1] == b'!' {
             continue; // image
         }
-        inferred(&cap[1], &cap[2], start, &mut out, &mut seen);
+        inferred(&cap[1], &cap[2], start, true, &mut out, &mut seen);
     }
 
+    // Wiki-links are Obsidian-style name references: a bare `[[Jakarta]]` is a
+    // GLOBAL name (resolved by title/alias/basename anywhere), never doc-dir-
+    // prefixed. Multi-segment `[[a/b]]` stays root-relative.
     for cap in WIKILINK.captures_iter(&scrubbed) {
         let target = cap[1].trim();
         let anchor = cap.get(2).map(|m| m.as_str()).unwrap_or(target);
         let start = cap.get(0).unwrap().start();
-        inferred(anchor, target, start, &mut out, &mut seen);
+        inferred(anchor, target, start, false, &mut out, &mut seen);
     }
 
     out
@@ -156,9 +162,14 @@ fn context_around(text: &str, at: usize) -> &str {
 }
 
 /// Normalize a link target to a knowledge slug: skip external URLs and anchors,
-/// strip `.md` and `#fragment`, resolve `./`/`../` against the page dir,
-/// normalize `\` to `/`. Returns None for targets that aren't knowledge pages.
-pub fn normalize_slug(page_dir: &str, target: &str) -> Option<String> {
+/// strip `.md` and `#fragment`, resolve `./`/`../` against the doc dir,
+/// normalize `\` to `/`. Returns None for targets that aren't knowledge docs.
+///
+/// `prefix_bare` controls how a single-segment bare name (no `/`) is treated:
+/// `true` (markdown links) resolves it against `doc_dir`; `false` (Obsidian
+/// wiki-links) keeps it as a bare global name for title/alias/basename lookup.
+/// Explicitly relative targets (`./`, `../`) are always doc-dir-relative.
+pub fn normalize_slug(doc_dir: &str, target: &str, prefix_bare: bool) -> Option<String> {
     let mut t = target.trim();
     // Angle-bracket targets: [x](<my notes/a.md>)
     if let Some(inner) = t.strip_prefix('<').and_then(|s| s.strip_suffix('>')) {
@@ -178,10 +189,12 @@ pub fn normalize_slug(page_dir: &str, target: &str) -> Option<String> {
 
     let mut parts: Vec<&str> = Vec::new();
     let absolute = t.starts_with('/');
-    // `./x`, `../x`, and bare names resolve against the page's directory;
-    // multi-segment targets like `wiki/people/x` are knowledge-root-relative.
-    if !absolute && (t.starts_with("./") || t.starts_with("../") || !t.contains('/')) {
-        parts.extend(page_dir.split('/').filter(|s| !s.is_empty()));
+    // `./x` and `../x` always resolve against the doc's directory. A bare name
+    // (no `/`) is doc-dir-relative only when `prefix_bare` is set; otherwise it
+    // stays a global name. Multi-segment targets are knowledge-root-relative.
+    let bare = !t.contains('/');
+    if !absolute && (t.starts_with("./") || t.starts_with("../") || (bare && prefix_bare)) {
+        parts.extend(doc_dir.split('/').filter(|s| !s.is_empty()));
     }
     for seg in t.split('/') {
         match seg {
@@ -317,23 +330,40 @@ mod tests {
     #[test]
     fn slug_normalization() {
         assert_eq!(
-            normalize_slug("people", "../companies/acme.md"),
+            normalize_slug("people", "../companies/acme.md", true),
             Some("companies/acme".into())
         );
-        assert_eq!(normalize_slug("a/b", "./c.md"), Some("a/b/c".into()));
+        assert_eq!(normalize_slug("a/b", "./c.md", true), Some("a/b/c".into()));
         assert_eq!(
-            normalize_slug("", "wiki/people/garry-tan"),
+            normalize_slug("", "wiki/people/garry-tan", true),
             Some("wiki/people/garry-tan".into())
         );
-        assert_eq!(normalize_slug("x", "/abs/path.md"), Some("abs/path".into()));
-        // Bare names are page-dir-relative; multi-segment are root-relative.
-        assert_eq!(
-            normalize_slug("x", "page.md#section"),
-            Some("x/page".into())
-        );
-        assert_eq!(normalize_slug("x", "https://a.b/c"), None);
-        assert_eq!(normalize_slug("x", "#anchor"), None);
-        assert_eq!(normalize_slug("", "../escapes"), None);
+        assert_eq!(normalize_slug("x", "/abs/path.md", true), Some("abs/path".into()));
+        // With prefix_bare, a bare name is doc-dir-relative (markdown links).
+        assert_eq!(normalize_slug("x", "doc.md#section", true), Some("x/doc".into()));
+        assert_eq!(normalize_slug("x", "https://a.b/c", true), None);
+        assert_eq!(normalize_slug("x", "#anchor", true), None);
+        assert_eq!(normalize_slug("", "../escapes", true), None);
+    }
+
+    #[test]
+    fn bare_wikilink_target_is_global_not_dir_prefixed() {
+        // prefix_bare=false: a bare name stays global (no doc_dir prefix).
+        assert_eq!(normalize_slug("xyz", "Jakarta", false), Some("Jakarta".into()));
+        assert_eq!(normalize_slug("a/b/c", "Bob", false), Some("Bob".into()));
+        // Multi-segment wiki-links remain root-relative regardless of prefix_bare.
+        assert_eq!(normalize_slug("xyz", "people/bob", false), Some("people/bob".into()));
+        // Explicitly relative wiki-links still resolve against doc_dir.
+        assert_eq!(normalize_slug("xyz", "./sibling", false), Some("xyz/sibling".into()));
+    }
+
+    #[test]
+    fn bare_wikilink_in_body_emits_global_slug() {
+        let body = "User jalan ke [[Jakarta]] makan di [[Ayam Bakar Taliwang]].";
+        let links = extract_links(body, "trips/jakarta-2026");
+        let slugs: Vec<&str> = links.iter().map(|l| l.dst_slug.as_str()).collect();
+        assert!(slugs.contains(&"Jakarta"), "{slugs:?}");
+        assert!(slugs.contains(&"Ayam Bakar Taliwang"), "{slugs:?}");
     }
 
     #[test]

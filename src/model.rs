@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-/// A page in the knowledge store: one markdown file, identified by its slug
+/// A doc in the knowledge store: one markdown file, identified by its slug
 /// (path relative to the knowledge root, '/'-separated, no `.md` extension).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Page {
+pub struct Doc {
     pub id: i64,
     pub slug: String,
     pub title: String,
-    pub page_type: String,
+    pub doc_type: String,
     pub source_dir: String,
     pub tags: Vec<String>,
     pub content_hash: String,
@@ -26,7 +26,7 @@ pub struct Frontmatter {
     #[serde(default, deserialize_with = "lenient_string")]
     pub title: Option<String>,
     #[serde(rename = "type", default, deserialize_with = "lenient_string")]
-    pub page_type: Option<String>,
+    pub doc_type: Option<String>,
     #[serde(default, deserialize_with = "lenient_string")]
     pub description: Option<String>,
     #[serde(default, deserialize_with = "string_or_seq")]
@@ -72,14 +72,14 @@ where
     })
 }
 
-/// A chunk of a page produced by the chunker, before persistence.
+/// A chunk of a doc produced by the chunker, before persistence.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChunkDraft {
     pub heading_path: String,
     pub text: String,
 }
 
-/// A typed edge extracted from a page body, before slug resolution.
+/// A typed edge extracted from a doc body, before slug resolution.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LinkDraft {
     pub dst_slug: String,

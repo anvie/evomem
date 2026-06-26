@@ -33,7 +33,7 @@ pub const RECENCY_BASE_TAU: f32 = 90.0;
 pub struct ModeKnobs {
     /// Approximate token budget for returned result text.
     pub token_budget: usize,
-    /// Graph traversal depth from seed pages.
+    /// Graph traversal depth from seed docs.
     pub graph_hops: usize,
     /// Maximum results returned.
     pub max_results: usize,
@@ -78,7 +78,7 @@ impl SourceTiers {
         ("archive", 0.5),
     ];
 
-    /// Multiplier applied to a fused score based on the page's top-level dir.
+    /// Multiplier applied to a fused score based on the doc's top-level dir.
     /// Temporal queries skip the chat/daily demote (recency is the point).
     pub fn factor(source_dir: &str, intent: Intent) -> f32 {
         if Self::BOOST.contains(&source_dir) {

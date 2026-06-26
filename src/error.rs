@@ -17,8 +17,8 @@ pub enum EvoError {
     #[error("embedder mismatch: database was built with `{stored}`, current is `{current}`; reinitialize the knowledge store")]
     EmbedderMismatch { stored: String, current: String },
 
-    #[error("page not found: {0}")]
-    PageNotFound(String),
+    #[error("doc not found: {0}")]
+    DocNotFound(String),
 
     #[error("server error: {0}")]
     Server(String),

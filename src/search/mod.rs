@@ -12,7 +12,7 @@ use crate::config::{
 };
 use crate::embed::Embedder;
 use crate::error::Result;
-use crate::model::{Evidence, Intent, Mode, Page};
+use crate::model::{Evidence, Intent, Mode, Doc};
 use crate::store::chunks::ChunkRow;
 use crate::store::Store;
 use crate::text::tokenize;
@@ -20,7 +20,7 @@ use crate::text::tokenize;
 /// One candidate flowing through the late pipeline stages.
 struct Candidate {
     chunk: ChunkRow,
-    page: Page,
+    doc: Doc,
     score: f32,
     vector_sim: f32,
     lexical: Option<lexical::MatchStats>,
@@ -66,7 +66,7 @@ pub fn search(
     );
     let fused: Vec<(i64, f32)> = fused.into_iter().take(FUSED_TOP_K).collect();
 
-    // Hydrate candidates; keep best fused score per page for graph seeding.
+    // Hydrate candidates; keep best fused score per doc for graph seeding.
     let chunk_ids: Vec<i64> = fused.iter().map(|(id, _)| *id).collect();
     let rows = store.get_chunks(&chunk_ids)?;
     let row_by_id: HashMap<i64, ChunkRow> = rows.into_iter().map(|r| (r.id, r)).collect();
@@ -77,17 +77,17 @@ pub fn search(
         let Some(row) = row_by_id.get(chunk_id) else {
             continue;
         };
-        let Some(page) = store.get_page_by_id(row.page_id)? else {
+        let Some(doc) = store.get_doc_by_id(row.doc_id)? else {
             continue;
         };
-        if SourceTiers::is_excluded(&page.source_dir) {
+        if SourceTiers::is_excluded(&doc.source_dir) {
             continue;
         }
-        let best = page_best.entry(row.page_id).or_insert(0.0);
+        let best = page_best.entry(row.doc_id).or_insert(0.0);
         *best = best.max(*score);
         candidates.push(Candidate {
             chunk: row.clone(),
-            page,
+            doc,
             score: *score,
             vector_sim: vec_sims.get(chunk_id).copied().unwrap_or(0.0),
             lexical: lex_stats.get(chunk_id).cloned(),
@@ -95,17 +95,17 @@ pub fn search(
         });
     }
 
-    // Graph augmentation: boost adjacency, inject factually-connected pages.
+    // Graph augmentation: boost adjacency, inject factually-connected docs.
     let graph_results = graph::augment(store, &page_best, k.graph_hops)?;
     for gr in graph_results {
         if gr.injected {
-            if let (Some(chunk), Some(page)) = (
-                store.first_chunk_for_page(gr.page_id)?,
-                store.get_page_by_id(gr.page_id)?,
+            if let (Some(chunk), Some(doc)) = (
+                store.first_chunk_for_page(gr.doc_id)?,
+                store.get_doc_by_id(gr.doc_id)?,
             ) {
                 candidates.push(Candidate {
                     chunk,
-                    page,
+                    doc,
                     score: gr.score,
                     vector_sim: 0.0,
                     lexical: None,
@@ -113,11 +113,11 @@ pub fn search(
                 });
             }
         } else {
-            for c in candidates.iter_mut().filter(|c| c.page.id == gr.page_id) {
-                // augment() returns the page-level boosted score; preserve the
+            for c in candidates.iter_mut().filter(|c| c.doc.id == gr.doc_id) {
+                // augment() returns the doc-level boosted score; preserve the
                 // chunk's own share by applying the same multiplier.
-                if page_best[&gr.page_id] > 0.0 {
-                    c.score *= gr.score / page_best[&gr.page_id];
+                if page_best[&gr.doc_id] > 0.0 {
+                    c.score *= gr.score / page_best[&gr.doc_id];
                 }
             }
         }
@@ -129,14 +129,14 @@ pub fn search(
     let now = chrono::Utc::now();
     let mut hits: Vec<(Candidate, Evidence)> = Vec::new();
     for mut c in candidates {
-        c.score *= SourceTiers::factor(&c.page.source_dir, intent);
-        // Graph-authority prior: pages the knowledge graph points at are
+        c.score *= SourceTiers::factor(&c.doc.source_dir, intent);
+        // Graph-authority prior: docs the knowledge graph points at are
         // salient (typed edges count full, plain mentions half).
-        let (typed_in, mention_in) = store.in_degree(c.page.id)?;
+        let (typed_in, mention_in) = store.in_degree(c.doc.id)?;
         let in_weight = typed_in as f32 + 0.5 * mention_in as f32;
         c.score *= 1.0 + config::AUTHORITY_WEIGHT * (1.0 + in_weight).ln();
         // Recency prior: strong for temporal queries, a whisper otherwise.
-        if let Some(age_days) = page_age_days(&c.page, now) {
+        if let Some(age_days) = doc_age_days(&c.doc, now) {
             let (amp, tau) = if intent == Intent::Temporal {
                 (config::RECENCY_TEMPORAL, config::RECENCY_TEMPORAL_TAU)
             } else {
@@ -144,10 +144,10 @@ pub fn search(
             };
             c.score *= 1.0 + amp * (-age_days / tau).exp();
         }
-        let aliases = page_aliases(store, c.page.id)?;
+        let aliases = doc_aliases(store, c.doc.id)?;
         let alias_hit = aliases.iter().any(|a| a.to_lowercase() == q_norm);
-        let title_hit = c.page.title.to_lowercase() == q_norm
-            || (!q_norm.is_empty() && c.page.title.to_lowercase().contains(&q_norm));
+        let title_hit = c.doc.title.to_lowercase() == q_norm
+            || (!q_norm.is_empty() && c.doc.title.to_lowercase().contains(&q_norm));
         if alias_hit {
             c.score *= 1.6;
         } else if title_hit {
@@ -173,14 +173,14 @@ pub fn search(
         hits.push((c, evidence));
     }
 
-    // Dedup by slug (page max-pool: one page = its best chunk), stable order.
+    // Dedup by slug (doc max-pool: one doc = its best chunk), stable order.
     hits.sort_by(|a, b| {
         b.0.score
             .total_cmp(&a.0.score)
-            .then(a.0.page.slug.cmp(&b.0.page.slug))
+            .then(a.0.doc.slug.cmp(&b.0.doc.slug))
     });
     let mut seen_slugs = std::collections::HashSet::new();
-    hits.retain(|(c, _)| seen_slugs.insert(c.page.slug.clone()));
+    hits.retain(|(c, _)| seen_slugs.insert(c.doc.slug.clone()));
 
     // Token budget + result cap.
     let mut out = Vec::new();
@@ -197,15 +197,15 @@ pub fn search(
         budget = budget.saturating_sub(cost);
         out.push(SearchHit {
             rank: i + 1,
-            slug: c.page.slug,
-            title: c.page.title,
+            slug: c.doc.slug,
+            title: c.doc.title,
             heading_path: c.chunk.heading_path,
             snippet,
             score: c.score,
             evidence,
-            page_type: c.page.page_type,
-            source_dir: c.page.source_dir,
-            updated_at: c.page.updated_at,
+            doc_type: c.doc.doc_type,
+            source_dir: c.doc.source_dir,
+            updated_at: c.doc.updated_at,
         });
     }
 
@@ -221,24 +221,24 @@ pub fn search(
 pub fn classify_intent(store: &Store, query: &str) -> Intent {
     intent::classify(query, |span| {
         store
-            .resolve_page(span)
+            .resolve_doc(span)
             .map(|p| p.is_some())
             .unwrap_or(false)
     })
 }
 
-fn page_aliases(store: &Store, page_id: i64) -> Result<Vec<String>> {
+fn doc_aliases(store: &Store, doc_id: i64) -> Result<Vec<String>> {
     let mut stmt = store
         .conn
-        .prepare_cached("SELECT alias FROM page_aliases WHERE page_id = ?1")?;
+        .prepare_cached("SELECT alias FROM doc_aliases WHERE doc_id = ?1")?;
     let rows = stmt
-        .query_map([page_id], |r| r.get(0))?
+        .query_map([doc_id], |r| r.get(0))?
         .collect::<rusqlite::Result<Vec<String>>>()?;
     Ok(rows)
 }
 
-fn page_age_days(page: &Page, now: chrono::DateTime<chrono::Utc>) -> Option<f32> {
-    let s = page.updated_at.as_deref()?;
+fn doc_age_days(doc: &Doc, now: chrono::DateTime<chrono::Utc>) -> Option<f32> {
+    let s = doc.updated_at.as_deref()?;
     let when = chrono::DateTime::parse_from_rfc3339(s)
         .map(|dt| dt.with_timezone(&chrono::Utc))
         .ok()

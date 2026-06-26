@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use crate::error::Result;
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 const DDL: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -10,11 +10,11 @@ CREATE TABLE IF NOT EXISTS meta (
   value TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS pages (
+CREATE TABLE IF NOT EXISTS docs (
   id           INTEGER PRIMARY KEY,
   slug         TEXT NOT NULL UNIQUE,
   title        TEXT NOT NULL,
-  page_type    TEXT NOT NULL DEFAULT 'note',
+  doc_type     TEXT NOT NULL DEFAULT 'note',
   source_dir   TEXT NOT NULL DEFAULT '',
   tags         TEXT NOT NULL DEFAULT '[]',
   content_hash TEXT NOT NULL,
@@ -23,33 +23,33 @@ CREATE TABLE IF NOT EXISTS pages (
   synced_at    TEXT NOT NULL,
   deleted_at   TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_pages_live ON pages(deleted_at) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_docs_live ON docs(deleted_at) WHERE deleted_at IS NULL;
 
-CREATE TABLE IF NOT EXISTS page_aliases (
-  page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS doc_aliases (
+  doc_id INTEGER NOT NULL REFERENCES docs(id) ON DELETE CASCADE,
   alias   TEXT NOT NULL COLLATE NOCASE,
-  PRIMARY KEY (alias, page_id)
+  PRIMARY KEY (alias, doc_id)
 );
 
 CREATE TABLE IF NOT EXISTS chunks (
   id           INTEGER PRIMARY KEY,
-  page_id      INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  doc_id      INTEGER NOT NULL REFERENCES docs(id) ON DELETE CASCADE,
   chunk_index  INTEGER NOT NULL,
   heading_path TEXT NOT NULL DEFAULT '',
   text         TEXT NOT NULL,
   embedding    BLOB NOT NULL,
-  UNIQUE(page_id, chunk_index)
+  UNIQUE(doc_id, chunk_index)
 );
 
 CREATE TABLE IF NOT EXISTS links (
-  src_page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  src_doc_id INTEGER NOT NULL REFERENCES docs(id) ON DELETE CASCADE,
   dst_slug    TEXT NOT NULL,
-  dst_page_id INTEGER REFERENCES pages(id),
+  dst_doc_id INTEGER REFERENCES docs(id),
   edge_type   TEXT NOT NULL DEFAULT 'mentions',
   anchor_text TEXT,
-  PRIMARY KEY (src_page_id, dst_slug, edge_type)
+  PRIMARY KEY (src_doc_id, dst_slug, edge_type)
 );
-CREATE INDEX IF NOT EXISTS idx_links_dst ON links(dst_page_id);
+CREATE INDEX IF NOT EXISTS idx_links_dst ON links(dst_doc_id);
 
 -- Inverted index for Meilisearch-style lexical ranking (no FTS5/BM25).
 -- attr: 0 = title, 1 = heading_path, 2 = body text.

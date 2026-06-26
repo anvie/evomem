@@ -59,7 +59,7 @@ mod tests {
         let doc = "---\ntitle: Alice Chen\ntype: person\naliases: [Ali, A. Chen]\ntags:\n  - vip\ncreated: 2026-01-05\n---\nBody here.";
         let (fm, body) = parse("x.md", doc).unwrap();
         assert_eq!(fm.title.as_deref(), Some("Alice Chen"));
-        assert_eq!(fm.page_type.as_deref(), Some("person"));
+        assert_eq!(fm.doc_type.as_deref(), Some("person"));
         assert_eq!(fm.aliases, vec!["Ali", "A. Chen"]);
         assert_eq!(fm.tags, vec!["vip"]);
         assert_eq!(fm.created.as_deref(), Some("2026-01-05"));
@@ -102,7 +102,7 @@ mod tests {
         let doc = "---\ntitle: 123\ntype: 7\ncreated: 2026\ntags: [1, real-tag]\n---\nbody";
         let (fm, _) = parse("x.md", doc).unwrap();
         assert_eq!(fm.title.as_deref(), Some("123"));
-        assert_eq!(fm.page_type.as_deref(), Some("7"));
+        assert_eq!(fm.doc_type.as_deref(), Some("7"));
         assert_eq!(fm.created.as_deref(), Some("2026"));
         assert_eq!(fm.tags, vec!["1", "real-tag"]);
     }

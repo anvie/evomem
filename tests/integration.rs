@@ -55,9 +55,9 @@ fn build_fixture(root: &Path) {
     write(
         root,
         "test/scratch.md",
-        "---\ntitle: Scratch\n---\nAcme Acme Acme — this hard-excluded page must never surface in search.\n",
+        "---\ntitle: Scratch\n---\nAcme Acme Acme — this hard-excluded doc must never surface in search.\n",
     );
-    // Stale page: updated long before "now".
+    // Stale doc: updated long before "now".
     write(
         root,
         "people/carol-old.md",
@@ -98,9 +98,9 @@ fn sync_is_idempotent_and_detects_deletes() {
     let report = ingest::sync_dir(&f.store, &f.embedder).unwrap();
     assert_eq!(report.deleted, 1);
     let s = stats::stats(&f.store).unwrap();
-    assert_eq!(s.pages, 8);
-    assert_eq!(s.deleted_pages, 1);
-    // Deleted page no longer searchable.
+    assert_eq!(s.docs, 8);
+    assert_eq!(s.deleted_docs, 1);
+    // Deleted doc no longer searchable.
     let resp = search::search(
         &f.store,
         &f.embedder,
@@ -122,9 +122,9 @@ fn search_finds_entities_with_evidence_and_excludes_test_dir() {
         resp.hits[0].evidence,
         Evidence::AliasHit | Evidence::ExactTitleMatch
     ));
-    // Hard-excluded test/ page never surfaces, despite spamming "Acme".
+    // Hard-excluded test/ doc never surfaces, despite spamming "Acme".
     assert!(resp.hits.iter().all(|h| !h.slug.starts_with("test/")));
-    // Dedup: one hit per page slug.
+    // Dedup: one hit per doc slug.
     let mut slugs: Vec<&str> = resp.hits.iter().map(|h| h.slug.as_str()).collect();
     slugs.sort();
     slugs.dedup();
@@ -159,24 +159,24 @@ fn typo_and_stem_queries_still_hit() {
 #[test]
 fn directory_index_link_resolution() {
     let f = setup();
-    // Create a directory index page: docs/api/index.md
+    // Create a directory index doc: docs/api/index.md
     write(
         f.store.brain_root.as_path(),
         "docs/api/index.md",
         "---\ntitle: API Documentation\ntype: doc\n---\n# API Docs\nInternal API reference for the platform.\n",
     );
-    // Create a page linking to the directory WITHOUT /index
+    // Create a doc linking to the directory WITHOUT /index
     write(
         f.store.brain_root.as_path(),
         "people/linker.md",
         "---\ntitle: Linker Test\ntype: person\n---\nSee [[docs/api]] for the full API reference.\n",
     );
     let report = ingest::sync_dir(&f.store, &f.embedder).unwrap();
-    assert_eq!(report.added, 2, "directory + linker page added");
+    assert_eq!(report.added, 2, "directory + linker doc added");
 
     // The link [[docs/api]] should resolve to docs/api/index.
-    // Use store.neighbors() which returns EdgeRow with dst_page_id.
-    let linker = f.store.resolve_page("Linker Test").unwrap().unwrap();
+    // Use store.neighbors() which returns EdgeRow with dst_doc_id.
+    let linker = f.store.resolve_doc("Linker Test").unwrap().unwrap();
     let edges = f.store.neighbors(linker.id, None).unwrap();
     let api_edge = edges.iter().find(|e| e.dst_slug == "docs/api");
     assert!(
@@ -184,14 +184,14 @@ fn directory_index_link_resolution() {
         "link to docs/api not found in edges: {edges:?}"
     );
     assert!(
-        api_edge.unwrap().dst_page_id.is_some(),
-        "dst_page_id is NULL — /index fallback failed for [[docs/api]]"
+        api_edge.unwrap().dst_doc_id.is_some(),
+        "dst_doc_id is NULL — /index fallback failed for [[docs/api]]"
     );
 
-    // Verify the resolved page is the index page
+    // Verify the resolved doc is the index doc
     let api_page = f
         .store
-        .get_page_by_id(api_edge.unwrap().dst_page_id.unwrap())
+        .get_doc_by_id(api_edge.unwrap().dst_doc_id.unwrap())
         .unwrap()
         .unwrap();
     assert_eq!(api_page.slug, "docs/api/index");
@@ -201,7 +201,7 @@ fn directory_index_link_resolution() {
 #[test]
 fn graph_has_typed_edges_and_traverses() {
     let f = setup();
-    let alice = f.store.resolve_page("Alice Chen").unwrap().unwrap();
+    let alice = f.store.resolve_doc("Alice Chen").unwrap().unwrap();
     let edges = search::graph::traverse(&f.store, alice.id, Some("works_at"), 1).unwrap();
     assert!(
         edges
@@ -219,7 +219,7 @@ fn graph_has_typed_edges_and_traverses() {
         .any(|e| e.src_slug == "people/bob-roe" && e.edge_type == "invested_in"));
 
     // Custom edge type from typed blockquote.
-    let acme = f.store.resolve_page("Acme").unwrap().unwrap();
+    let acme = f.store.resolve_doc("Acme").unwrap().unwrap();
     let edges = search::graph::traverse(&f.store, acme.id, Some("competitor_of"), 1).unwrap();
     assert!(edges.iter().any(|e| e.dst_slug == "companies/zenith-pay"));
 }
@@ -228,7 +228,7 @@ fn graph_has_typed_edges_and_traverses() {
 fn graph_augmentation_pulls_connected_pages() {
     let f = setup();
     // "series-B fintech engineering" hits alice/acme lexically+vector;
-    // graph should keep factually-connected pages in reach.
+    // graph should keep factually-connected docs in reach.
     let resp = search::search(
         &f.store,
         &f.embedder,
@@ -261,7 +261,7 @@ fn think_reports_facts_and_gaps() {
     assert!(
         resp.gaps
             .iter()
-            .any(|g| matches!(g.kind, evomem::api::GapKind::StalePage)),
+            .any(|g| matches!(g.kind, evomem::api::GapKind::StaleDoc)),
         "stale gap missing: {:?}",
         resp.gaps
     );
@@ -279,7 +279,7 @@ fn think_reports_facts_and_gaps() {
         .iter()
         .any(|g| matches!(g.kind, evomem::api::GapKind::UnknownEntity)
             && g.message.contains("Zara Quinn")));
-    // Dangling link gap: acme references zenith-pay which has no page.
+    // Dangling link gap: acme references zenith-pay which has no doc.
     let resp = think::think(&f.store, &f.embedder, "Acme Corp", Mode::Balanced, now).unwrap();
     assert!(resp
         .gaps
@@ -377,7 +377,7 @@ fn rename_repoints_inbound_links() {
     let report = ingest::sync_dir(&f.store, &f.embedder).unwrap();
     assert_eq!(report.renamed, 1, "{report:?}");
 
-    let alice = f.store.resolve_page("Alice Chen").unwrap().unwrap();
+    let alice = f.store.resolve_doc("Alice Chen").unwrap().unwrap();
     let edges = search::graph::traverse(&f.store, alice.id, Some("works_at"), 1).unwrap();
     assert!(
         edges.iter().any(|e| e.dst_slug == "companies/acme-renamed"),
@@ -392,7 +392,7 @@ fn oversized_files_are_skipped_and_reported() {
     fs::write(f.store.brain_root.join("huge.md"), &big).unwrap();
     let report = ingest::sync_dir(&f.store, &f.embedder).unwrap();
     assert!(report.errors.iter().any(|e| e.path.contains("huge.md")));
-    assert!(f.store.get_page_by_slug("huge").unwrap().is_none());
+    assert!(f.store.get_doc_by_slug("huge").unwrap().is_none());
     assert_eq!(report.deleted, 0, "skipped file must not delete anything");
 }
 
@@ -421,7 +421,7 @@ fn capture_collisions_and_hostile_titles_are_safe() {
         .join(format!("{}.md", second.slug))
         .exists());
 
-    // A title with newlines and quotes must produce a valid, parseable page.
+    // A title with newlines and quotes must produce a valid, parseable doc.
     let hostile = capture::capture(
         &f.store,
         &f.embedder,
@@ -432,8 +432,8 @@ fn capture_collisions_and_hostile_titles_are_safe() {
         now,
     )
     .unwrap();
-    let page = f.store.get_page_by_slug(&hostile.slug).unwrap().unwrap();
-    assert_eq!(page.title, "line1 line2: \"quoted\"");
+    let doc = f.store.get_doc_by_slug(&hostile.slug).unwrap().unwrap();
+    assert_eq!(doc.title, "line1 line2: \"quoted\"");
     // And the file round-trips through a full re-sync without errors.
     let report = ingest::sync_dir(&f.store, &f.embedder).unwrap();
     assert!(report.errors.is_empty(), "{:?}", report.errors);
@@ -448,7 +448,7 @@ fn hedged_links_do_not_create_typed_edges() {
         "---\ntitle: Eve Maybe\ntype: person\n---\nEve has not invested in [Acme Corp](../companies/acme-corp.md) yet.\n",
     );
     ingest::sync_dir(&f.store, &f.embedder).unwrap();
-    let eve = f.store.resolve_page("Eve Maybe").unwrap().unwrap();
+    let eve = f.store.resolve_doc("Eve Maybe").unwrap().unwrap();
     let typed = search::graph::traverse(&f.store, eve.id, Some("invested_in"), 1).unwrap();
     assert!(
         typed.is_empty(),
@@ -498,7 +498,7 @@ fn temporal_intent_lets_chat_pages_surface() {
     )
     .unwrap();
     assert_eq!(resp.intent, Intent::Temporal);
-    // chat page is demoted but not excluded; with temporal intent it competes.
+    // chat doc is demoted but not excluded; with temporal intent it competes.
     assert!(resp
         .hits
         .iter()
@@ -512,29 +512,35 @@ use chrono::TimeZone;
 fn setup_kb_validate() -> (tempfile::TempDir, Store) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    // Valid KB file.
+    // Valid root doc.
     write(
         root,
-        "kb/good.md",
+        "good.md",
         "---\ntitle: Good\ndescription: A valid note\ntype: note\n---\nbody\n",
+    );
+    // Valid nested doc using a new entity-like type.
+    write(
+        root,
+        "places/jakarta.md",
+        "---\ntitle: Jakarta\ndescription: Capital of Indonesia\ntype: place\n---\nbody\n",
     );
     // Missing `type`.
     write(
         root,
-        "kb/missing-type.md",
+        "missing-type.md",
         "---\ntitle: NoType\ndescription: Has no type\n---\nbody\n",
     );
     // Invalid `type`.
     write(
         root,
-        "kb/bad-type.md",
+        "bad-type.md",
         "---\ntitle: BadType\ndescription: Wrong type\ntype: log\n---\nbody\n",
     );
-    // Non-KB page (entities/) must be ignored by validate.
+    // `inbox/` raw captures are frontmatter-light and must be skipped.
     write(
         root,
-        "entities/acme.md",
-        "---\ntitle: Acme\ntype: entity\n---\nbody\n",
+        "inbox/raw.md",
+        "---\ntitle: Raw\ntype: note\n---\nbody\n",
     );
     let embedder = HashEmbedder;
     let store = Store::init(root, embedder.id(), embedder.dim()).unwrap();
@@ -542,23 +548,23 @@ fn setup_kb_validate() -> (tempfile::TempDir, Store) {
 }
 
 #[test]
-fn validate_all_scopes_to_kb_and_flags_invalid() {
+fn validate_checks_all_docs_and_skips_inbox() {
     let (_dir, store) = setup_kb_validate();
     let report = evomem::validate::run(&store, None, None, true).unwrap();
-    // 3 kb files checked; entities/acme.md skipped.
-    assert_eq!(report.checked, 3);
-    assert_eq!(report.valid, 1);
+    // 4 docs checked (good, places/jakarta, missing-type, bad-type); inbox/ skipped.
+    assert_eq!(report.checked, 4);
+    assert_eq!(report.valid, 2);
     assert_eq!(report.invalid, 2);
     let paths: Vec<&str> = report.issues.iter().map(|i| i.path.as_str()).collect();
-    assert!(paths.contains(&"kb/missing-type.md"));
-    assert!(paths.contains(&"kb/bad-type.md"));
-    assert!(!paths.iter().any(|p| p.starts_with("entities/")));
+    assert!(paths.contains(&"missing-type.md"));
+    assert!(paths.contains(&"bad-type.md"));
+    assert!(!paths.iter().any(|p| p.starts_with("inbox/")));
 }
 
 #[test]
 fn validate_single_file() {
     let (dir, store) = setup_kb_validate();
-    let path = dir.path().join("kb/bad-type.md");
+    let path = dir.path().join("bad-type.md");
     let report = evomem::validate::run(&store, Some(path.to_str().unwrap()), None, true).unwrap();
     assert_eq!(report.checked, 1);
     assert_eq!(report.invalid, 1);
@@ -572,8 +578,93 @@ fn validate_since_filters_by_mtime() {
     let future = "2999-01-01T00:00:00+00:00";
     let report = evomem::validate::run(&store, None, Some(future), false).unwrap();
     assert_eq!(report.checked, 0);
-    // A `since` far in the past includes all KB files.
+    // A `since` far in the past includes all docs (inbox/ still skipped).
     let past = "2000-01-01T00:00:00+00:00";
     let report = evomem::validate::run(&store, None, Some(past), false).unwrap();
-    assert_eq!(report.checked, 3);
+    assert_eq!(report.checked, 4);
+}
+
+/// Build a fresh synced store from `files` (rel-path, content) pairs.
+fn synced_store(files: &[(&str, &str)]) -> (tempfile::TempDir, Store) {
+    let dir = tempfile::tempdir().unwrap();
+    for (rel, content) in files {
+        write(dir.path(), rel, content);
+    }
+    let embedder = HashEmbedder;
+    let store = Store::init(dir.path(), embedder.id(), embedder.dim()).unwrap();
+    ingest::sync_dir(&store, &embedder).unwrap();
+    (dir, store)
+}
+
+/// Find the outgoing edge `src_doc_id -> dst_slug` and return its dst_doc_id.
+fn outgoing(store: &Store, src_doc_id: i64, dst_slug: &str) -> Option<Option<i64>> {
+    store
+        .neighbors(src_doc_id, None)
+        .unwrap()
+        .into_iter()
+        .find(|e| e.src_doc_id == src_doc_id && e.dst_slug == dst_slug)
+        .map(|e| e.dst_doc_id)
+}
+
+#[test]
+fn bare_wikilink_resolves_by_title_across_folders() {
+    let (_dir, store) = synced_store(&[
+        (
+            "places/jakarta.md",
+            "---\ntitle: Jakarta\ndescription: Capital of Indonesia\ntype: place\n---\nIbu kota Indonesia.\n",
+        ),
+        (
+            "trips/notes.md",
+            "---\ntitle: Trip Notes\ndescription: A trip\ntype: note\n---\nUser jalan-jalan ke [[Jakarta]].\n",
+        ),
+    ]);
+    let jakarta = store.resolve_doc("Jakarta").unwrap().unwrap();
+    let notes = store.get_doc_by_slug("trips/notes").unwrap().unwrap();
+    // The bare `[[Jakarta]]` (dst_slug "Jakarta") resolves to the place doc
+    // living in a different folder, by title.
+    let dst = outgoing(&store, notes.id, "Jakarta").expect("edge to Jakarta exists");
+    assert_eq!(dst, Some(jakarta.id));
+    assert_eq!(stats::stats(&store).unwrap().dangling_links, 0);
+}
+
+#[test]
+fn ambiguous_title_link_stays_dangling() {
+    let (_dir, store) = synced_store(&[
+        (
+            "a/jakarta.md",
+            "---\ntitle: Jakarta\ndescription: One\ntype: place\n---\nFirst.\n",
+        ),
+        (
+            "b/jakarta.md",
+            "---\ntitle: Jakarta\ndescription: Two\ntype: place\n---\nSecond.\n",
+        ),
+        (
+            "c/notes.md",
+            "---\ntitle: Notes\ndescription: refs\ntype: note\n---\nSee [[Jakarta]].\n",
+        ),
+    ]);
+    let notes = store.get_doc_by_slug("c/notes").unwrap().unwrap();
+    // Two docs titled "Jakarta" → ambiguous → link left dangling, not guessed.
+    let dst = outgoing(&store, notes.id, "Jakarta").expect("edge to Jakarta exists");
+    assert_eq!(dst, None);
+    assert!(stats::stats(&store).unwrap().dangling_links >= 1);
+}
+
+#[test]
+fn wikilink_to_workspace_index_resolves() {
+    let (_dir, store) = synced_store(&[
+        (
+            "xyz/index.md",
+            "---\ntitle: Riset XYZ\ndescription: workspace\ntype: session\n---\nWorkspace.\n",
+        ),
+        (
+            "root-note.md",
+            "---\ntitle: Root Note\ndescription: refs\ntype: note\n---\nLihat [[xyz]].\n",
+        ),
+    ]);
+    let idx = store.get_doc_by_slug("xyz/index").unwrap().unwrap();
+    let note = store.get_doc_by_slug("root-note").unwrap().unwrap();
+    // `[[xyz]]` resolves to the folder's index doc via the {slug}/index rule.
+    let dst = outgoing(&store, note.id, "xyz").expect("edge to xyz exists");
+    assert_eq!(dst, Some(idx.id));
 }

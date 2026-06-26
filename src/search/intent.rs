@@ -22,7 +22,7 @@ static EVENT: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Deterministic intent classification — zero LLM calls. `is_known_entity`
-/// lets the caller check TitleCase spans against page titles/aliases without
+/// lets the caller check TitleCase spans against doc titles/aliases without
 /// this module touching the database. Misclassification degrades gracefully:
 /// the hybrid stack runs regardless.
 pub fn classify(query: &str, is_known_entity: impl Fn(&str) -> bool) -> Intent {

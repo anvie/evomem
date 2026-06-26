@@ -13,7 +13,7 @@ pub struct Posting {
 impl Store {
     pub fn live_chunk_count(&self) -> Result<i64> {
         Ok(self.conn.query_row(
-            "SELECT COUNT(*) FROM chunks c JOIN pages p ON p.id = c.page_id
+            "SELECT COUNT(*) FROM chunks c JOIN docs p ON p.id = c.doc_id
              WHERE p.deleted_at IS NULL",
             [],
             |r| r.get(0),
@@ -27,7 +27,7 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT DISTINCT w.word FROM word_index w
              JOIN chunks c ON c.id = w.chunk_id
-             JOIN pages p ON p.id = c.page_id
+             JOIN docs p ON p.id = c.doc_id
              WHERE p.deleted_at IS NULL",
         )?;
         let words = stmt
@@ -43,7 +43,7 @@ impl Store {
         let sql = format!(
             "SELECT COUNT(DISTINCT w.chunk_id) FROM word_index w
              JOIN chunks c ON c.id = w.chunk_id
-             JOIN pages p ON p.id = c.page_id
+             JOIN docs p ON p.id = c.doc_id
              WHERE w.word = ?1 AND p.deleted_at IS NULL {exclude_sql}"
         );
         let mut stmt = self.conn.prepare_cached(&sql)?;
@@ -65,14 +65,14 @@ impl Store {
         }
     }
 
-    /// All postings for an exact indexed word, restricted to live pages and
+    /// All postings for an exact indexed word, restricted to live docs and
     /// excluding hard-excluded source dirs (filtered at the SQL level).
     pub fn postings(&self, word: &str, excluded_dirs: &[&str]) -> Result<Vec<Posting>> {
         let exclude_sql = Self::exclude_clause(excluded_dirs);
         let sql = format!(
             "SELECT w.chunk_id, w.attr, w.pos FROM word_index w
              JOIN chunks c ON c.id = w.chunk_id
-             JOIN pages p ON p.id = c.page_id
+             JOIN docs p ON p.id = c.doc_id
              WHERE w.word = ?1 AND p.deleted_at IS NULL {exclude_sql}"
         );
         let mut stmt = self.conn.prepare_cached(&sql)?;

@@ -47,12 +47,12 @@ fn main() -> anyhow::Result<()> {
                 let resp = client.graph(start, edge.as_deref(), *hops)?;
                 emit(cli.json, &resp, render_graph)?;
             }
-            Command::Page { slug } => {
-                let page = client.page(slug)?;
+            Command::Doc { slug } => {
+                let doc = client.doc(slug)?;
                 if cli.json {
-                    println!("{}", serde_json::to_string_pretty(&page)?);
+                    println!("{}", serde_json::to_string_pretty(&doc)?);
                 } else {
-                    println!("# {} ({})\n\n{}", page.title, page.slug, page.content);
+                    println!("# {} ({})\n\n{}", doc.title, doc.slug, doc.content);
                 }
             }
             Command::Stats => {
@@ -111,35 +111,35 @@ fn main() -> anyhow::Result<()> {
         }
         Command::GraphQuery { start, edge, hops } => {
             let store = open(knowledge_root, &embedder)?;
-            let page = store
-                .resolve_page(start)?
-                .ok_or_else(|| EvoError::PageNotFound(start.clone()))?;
-            let edges = search::graph::traverse(&store, page.id, edge.as_deref(), *hops)?;
+            let doc = store
+                .resolve_doc(start)?
+                .ok_or_else(|| EvoError::DocNotFound(start.clone()))?;
+            let edges = search::graph::traverse(&store, doc.id, edge.as_deref(), *hops)?;
             let resp = GraphResponse {
-                start: page.slug,
+                start: doc.slug,
                 edges,
                 cached: false,
             };
             emit(cli.json, &resp, render_graph)?;
         }
-        Command::Page { slug } => {
+        Command::Doc { slug } => {
             let store = open(knowledge_root, &embedder)?;
-            let page = store
-                .resolve_page(slug)?
-                .ok_or_else(|| EvoError::PageNotFound(slug.clone()))?;
+            let doc = store
+                .resolve_doc(slug)?
+                .ok_or_else(|| EvoError::DocNotFound(slug.clone()))?;
             let content =
-                std::fs::read_to_string(store.brain_root.join(format!("{}.md", page.slug)))
+                std::fs::read_to_string(store.brain_root.join(format!("{}.md", doc.slug)))
                     .unwrap_or_default();
             if cli.json {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&serde_json::json!({
-                        "slug": page.slug, "title": page.title, "type": page.page_type,
-                        "tags": page.tags, "updated_at": page.updated_at, "content": content,
+                        "slug": doc.slug, "title": doc.title, "type": doc.doc_type,
+                        "tags": doc.tags, "updated_at": doc.updated_at, "content": content,
                     }))?
                 );
             } else {
-                println!("# {} ({})\n\n{}", page.title, page.slug, content);
+                println!("# {} ({})\n\n{}", doc.title, doc.slug, content);
             }
         }
         Command::Validate { path, since, all } => {
@@ -216,7 +216,7 @@ fn render_search(r: &SearchResponse) {
         println!("\n{:>2}. {} [{}]{}", h.rank, h.title, h.slug, heading);
         println!(
             "    score {:.4} | {:?} | {}",
-            h.score, h.evidence, h.page_type
+            h.score, h.evidence, h.doc_type
         );
         println!("    {}", h.snippet.replace('\n', " "));
     }
@@ -265,8 +265,8 @@ fn render_graph(r: &GraphResponse) {
 
 fn render_stats(s: &StatsResponse) {
     println!(
-        "pages: {} live, {} deleted | chunks: {} | vocabulary: {} words | links: {} ({} dangling)",
-        s.pages, s.deleted_pages, s.chunks, s.indexed_words, s.links, s.dangling_links
+        "docs: {} live, {} deleted | chunks: {} | vocabulary: {} words | links: {} ({} dangling)",
+        s.docs, s.deleted_docs, s.chunks, s.indexed_words, s.links, s.dangling_links
     );
     if !s.links_by_type.is_empty() {
         println!("edges by type:");
@@ -274,9 +274,9 @@ fn render_stats(s: &StatsResponse) {
             println!("  {t}: {n}");
         }
     }
-    if !s.pages_by_source.is_empty() {
-        println!("pages by source:");
-        for (d, n) in &s.pages_by_source {
+    if !s.docs_by_source.is_empty() {
+        println!("docs by source:");
+        for (d, n) in &s.docs_by_source {
             println!("  {}: {}", if d.is_empty() { "(root)" } else { d }, n);
         }
     }

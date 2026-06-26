@@ -1,6 +1,6 @@
 pub mod chunks;
 pub mod links;
-pub mod pages;
+pub mod docs;
 pub mod schema;
 pub mod words;
 
@@ -123,12 +123,12 @@ mod tests {
     #[test]
     fn word_index_is_populated_and_cascades_on_chunk_delete() {
         let (_dir, store) = test_store();
-        let page_id = store
+        let doc_id = store
             .upsert_page(
-                &crate::store::pages::PageUpsert {
+                &crate::store::docs::DocUpsert {
                     slug: "people/alice",
                     title: "Alice Chen",
-                    page_type: "person",
+                    doc_type: "person",
                     source_dir: "people",
                     tags: &[],
                     content_hash: "h1",
@@ -144,7 +144,7 @@ mod tests {
             text: "Alice works at Acme Corp on retrieval systems.".into(),
         }];
         store
-            .replace_chunks_for_page(page_id, "Alice Chen", &drafts, &[vec![0.0; 4]])
+            .replace_chunks_for_page(doc_id, "Alice Chen", &drafts, &[vec![0.0; 4]])
             .unwrap();
 
         let vocab = store.vocabulary().unwrap();
@@ -160,7 +160,7 @@ mod tests {
         assert!(postings.iter().any(|p| p.attr == 0));
         assert!(postings.iter().any(|p| p.attr == 2));
 
-        store.delete_chunks_for_page(page_id).unwrap();
+        store.delete_chunks_for_page(doc_id).unwrap();
         assert!(
             store.postings("alice", &[]).unwrap().is_empty(),
             "FK cascade cleared index"
@@ -199,12 +199,12 @@ mod tests {
     #[test]
     fn truncated_embedding_blob_is_a_loud_error() {
         let (_dir, store) = test_store();
-        let page_id = store
+        let doc_id = store
             .upsert_page(
-                &crate::store::pages::PageUpsert {
+                &crate::store::docs::DocUpsert {
                     slug: "n/x",
                     title: "X",
-                    page_type: "note",
+                    doc_type: "note",
                     source_dir: "n",
                     tags: &[],
                     content_hash: "h",
@@ -217,7 +217,7 @@ mod tests {
             .unwrap();
         store
             .replace_chunks_for_page(
-                page_id,
+                doc_id,
                 "X",
                 &[ChunkDraft {
                     heading_path: String::new(),

@@ -1,8 +1,10 @@
-//! KB-frontmatter validation.
+//! Doc-frontmatter validation.
 //!
-//! Enforces the knowledge-base file standard: every KB markdown file (those
-//! whose slug lives under `kb/`) must carry frontmatter with non-empty
-//! `title`, `description`, and `type`, where `type ∈ {note, session, group}`.
+//! Enforces the knowledge-base file standard: every markdown doc in the brain
+//! must carry frontmatter with non-empty `title`, `description`, and `type`,
+//! where `type` is one of the values in [`VALID_TYPES`] (note/session/group
+//! plus the entity-like types person/place/venue/organization/company/product/
+//! contact).
 //!
 //! Validation never aborts on a bad file — each problem is collected into the
 //! report (mirroring `sync`). The command exits 0 even when files are invalid;
@@ -18,8 +20,22 @@ use crate::ingest::{frontmatter, is_hidden, slug_for};
 use crate::model::Frontmatter;
 use crate::store::Store;
 
-/// Allowed values for a KB file's `type` frontmatter field.
-pub const VALID_TYPES: [&str; 3] = ["note", "session", "group"];
+/// Allowed values for a doc's `type` frontmatter field.
+///
+/// `note` is generic prose; `session`/`group` are workspace `index.md` docs;
+/// the rest are entity-like docs that double as graph nodes.
+pub const VALID_TYPES: [&str; 10] = [
+    "note",
+    "session",
+    "group",
+    "person",
+    "place",
+    "venue",
+    "organization",
+    "company",
+    "product",
+    "contact",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidateIssue {
@@ -91,8 +107,9 @@ pub fn run(
             Some(s) => s,
             None => continue,
         };
-        // KB scope only: skip entities/, notes/, inbox/, etc.
-        if slug.split('/').next().unwrap_or("") != "kb" {
+        // Every doc is a knowledge doc now (no type-based dirs). The only
+        // exclusion is `inbox/`, which holds raw, frontmatter-light captures.
+        if slug.split('/').next().unwrap_or("") == "inbox" {
             continue;
         }
         if let Some(thr) = threshold {
@@ -152,7 +169,7 @@ fn check(fm: &Frontmatter) -> Option<String> {
     if fm.description.as_deref().unwrap_or("").trim().is_empty() {
         missing.push("description");
     }
-    let type_val = fm.page_type.as_deref().unwrap_or("").trim();
+    let type_val = fm.doc_type.as_deref().unwrap_or("").trim();
     if type_val.is_empty() {
         missing.push("type");
     }
@@ -188,7 +205,7 @@ mod tests {
         Frontmatter {
             title: title.map(String::from),
             description: desc.map(String::from),
-            page_type: ty.map(String::from),
+            doc_type: ty.map(String::from),
             ..Default::default()
         }
     }
@@ -198,6 +215,13 @@ mod tests {
         assert!(check(&fm(Some("T"), Some("D"), Some("note"))).is_none());
         assert!(check(&fm(Some("T"), Some("D"), Some("session"))).is_none());
         assert!(check(&fm(Some("T"), Some("D"), Some("group"))).is_none());
+    }
+
+    #[test]
+    fn entity_like_types_pass() {
+        for ty in ["person", "place", "venue", "organization", "company", "product", "contact"] {
+            assert!(check(&fm(Some("T"), Some("D"), Some(ty))).is_none(), "{ty} should be valid");
+        }
     }
 
     #[test]

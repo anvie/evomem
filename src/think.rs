@@ -23,10 +23,10 @@ pub fn think(
     let response = search::search(store, embedder, query, mode)?;
 
     let mut facts = Vec::new();
-    let mut page_ids = Vec::new();
+    let mut doc_ids = Vec::new();
     for hit in &response.hits {
-        if let Some(page) = store.get_page_by_slug(&hit.slug)? {
-            page_ids.push(page.id);
+        if let Some(doc) = store.get_doc_by_slug(&hit.slug)? {
+            doc_ids.push(doc.id);
         }
         facts.push(ThinkFact {
             slug: hit.slug.clone(),
@@ -40,15 +40,15 @@ pub fn think(
 
     let mut gaps = Vec::new();
 
-    // 1. Stale pages: cited but not updated in STALE_DAYS. Deduped by slug so
-    // a page cited through several facts is reported once.
+    // 1. Stale docs: cited but not updated in STALE_DAYS. Deduped by slug so
+    // a doc cited through several facts is reported once.
     let mut stale_seen = std::collections::HashSet::new();
     for fact in &facts {
         if let Some(updated) = fact.updated_at.as_deref().and_then(parse_when) {
             let age_days = (now - updated).num_days();
             if age_days > STALE_DAYS && stale_seen.insert(fact.slug.clone()) {
                 gaps.push(Gap {
-                    kind: GapKind::StalePage,
+                    kind: GapKind::StaleDoc,
                     message: format!(
                         "No updates on \"{}\" ({}) since {} ({} weeks ago) — verify before relying on it.",
                         fact.title,
@@ -61,7 +61,7 @@ pub fn think(
         }
     }
 
-    // 2. Unknown entities: TitleCase spans in the query with no page/alias.
+    // 2. Unknown entities: TitleCase spans in the query with no doc/alias.
     // Spans opening with a sentence-leader ("Should We Acquire …") are
     // question grammar, not entity names — skip them. Capped to keep one
     // noisy query from drowning the report.
@@ -76,20 +76,20 @@ pub fn think(
         if unknown_count >= 3 {
             break;
         }
-        if store.resolve_page(&span)?.is_none() {
+        if store.resolve_doc(&span)?.is_none() {
             unknown_count += 1;
             gaps.push(Gap {
                 kind: GapKind::UnknownEntity,
-                message: format!("No page exists for \"{span}\"."),
+                message: format!("No doc exists for \"{span}\"."),
             });
         }
     }
 
-    // 3. Dangling links: cited pages referencing pages that don't exist yet.
-    for (src, dst) in store.dangling_from_pages(&page_ids)? {
+    // 3. Dangling links: cited docs referencing docs that don't exist yet.
+    for (src, dst) in store.dangling_from_pages(&doc_ids)? {
         gaps.push(Gap {
             kind: GapKind::DanglingLink,
-            message: format!("\"{src}\" references missing page \"{dst}\" — a hole to fill."),
+            message: format!("\"{src}\" references missing doc \"{dst}\" — a hole to fill."),
         });
     }
 

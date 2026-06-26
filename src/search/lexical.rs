@@ -274,7 +274,7 @@ pub fn compare(a: &MatchStats, b: &MatchStats) -> std::cmp::Ordering {
 mod tests {
     use super::*;
     use crate::model::ChunkDraft;
-    use crate::store::pages::PageUpsert;
+    use crate::store::docs::DocUpsert;
 
     fn stats(words: u32, typo: u32, prox: u32, attr: i64, pos: i64, exact: u32) -> MatchStats {
         MatchStats {
@@ -338,10 +338,10 @@ mod tests {
     fn put(store: &Store, slug: &str, title: &str, body: &str) {
         let id = store
             .upsert_page(
-                &PageUpsert {
+                &DocUpsert {
                     slug,
                     title,
-                    page_type: "note",
+                    doc_type: "note",
                     source_dir: slug.split('/').next().unwrap_or(""),
                     tags: &[],
                     content_hash: slug,
@@ -368,7 +368,7 @@ mod tests {
     fn top_slug(store: &Store, query: &str) -> String {
         let hits = search(store, query, 10).unwrap();
         let rows = store.get_chunks(&[hits[0].chunk_id]).unwrap();
-        store.get_page_by_id(rows[0].page_id).unwrap().unwrap().slug
+        store.get_doc_by_id(rows[0].doc_id).unwrap().unwrap().slug
     }
 
     fn fixture_store() -> (tempfile::TempDir, Store) {
@@ -400,7 +400,7 @@ mod tests {
             .get_chunks(&hits.iter().map(|h| h.chunk_id).collect::<Vec<_>>())
             .unwrap();
         let last_page = store
-            .get_page_by_id(rows.last().unwrap().page_id)
+            .get_doc_by_id(rows.last().unwrap().doc_id)
             .unwrap()
             .unwrap();
         assert_eq!(last_page.slug, "notes/partial");

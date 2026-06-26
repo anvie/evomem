@@ -16,31 +16,31 @@ pub const ATTR_BODY: i64 = 2;
 #[derive(Debug, Clone)]
 pub struct ChunkRow {
     pub id: i64,
-    pub page_id: i64,
+    pub doc_id: i64,
     pub heading_path: String,
     pub text: String,
 }
 
 impl Store {
-    /// Replace all chunks (embeddings + inverted word index) for a page.
+    /// Replace all chunks (embeddings + inverted word index) for a doc.
     /// Caller wraps the whole per-file sync in a transaction.
     pub fn replace_chunks_for_page(
         &self,
-        page_id: i64,
+        doc_id: i64,
         title: &str,
         drafts: &[ChunkDraft],
         embeddings: &[Vec<f32>],
     ) -> Result<()> {
-        self.delete_chunks_for_page(page_id)?;
+        self.delete_chunks_for_page(doc_id)?;
         let mut insert_word = self.conn.prepare_cached(
             "INSERT OR IGNORE INTO word_index (word, chunk_id, attr, pos) VALUES (?1, ?2, ?3, ?4)",
         )?;
         for (i, (draft, emb)) in drafts.iter().zip(embeddings).enumerate() {
             self.conn.execute(
-                "INSERT INTO chunks (page_id, chunk_index, heading_path, text, embedding)
+                "INSERT INTO chunks (doc_id, chunk_index, heading_path, text, embedding)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![
-                    page_id,
+                    doc_id,
                     i as i64,
                     draft.heading_path,
                     draft.text,
@@ -61,10 +61,10 @@ impl Store {
         Ok(())
     }
 
-    /// Delete a page's chunks; word_index rows go with them via FK cascade.
-    pub fn delete_chunks_for_page(&self, page_id: i64) -> Result<()> {
+    /// Delete a doc's chunks; word_index rows go with them via FK cascade.
+    pub fn delete_chunks_for_page(&self, doc_id: i64) -> Result<()> {
         self.conn
-            .execute("DELETE FROM chunks WHERE page_id = ?1", [page_id])?;
+            .execute("DELETE FROM chunks WHERE doc_id = ?1", [doc_id])?;
         Ok(())
     }
 
@@ -75,7 +75,7 @@ impl Store {
     pub fn for_each_embedding(&self, dim: usize, mut f: impl FnMut(i64, &[u8])) -> Result<()> {
         let mut stmt = self.conn.prepare(
             "SELECT c.id, c.embedding FROM chunks c
-             JOIN pages p ON p.id = c.page_id
+             JOIN docs p ON p.id = c.doc_id
              WHERE p.deleted_at IS NULL",
         )?;
         let mut rows = stmt.query([])?;
@@ -99,13 +99,13 @@ impl Store {
         let mut out = Vec::with_capacity(ids.len());
         let mut stmt = self
             .conn
-            .prepare("SELECT id, page_id, heading_path, text FROM chunks WHERE id = ?1")?;
+            .prepare("SELECT id, doc_id, heading_path, text FROM chunks WHERE id = ?1")?;
         for id in ids {
             if let Some(row) = stmt
                 .query_map([id], |r| {
                     Ok(ChunkRow {
                         id: r.get(0)?,
-                        page_id: r.get(1)?,
+                        doc_id: r.get(1)?,
                         heading_path: r.get(2)?,
                         text: r.get(3)?,
                     })
@@ -118,20 +118,20 @@ impl Store {
         Ok(out)
     }
 
-    /// Best chunk (lowest index) for a page — used when the graph stage
-    /// injects factually-connected pages that hybrid search didn't surface.
-    pub fn first_chunk_for_page(&self, page_id: i64) -> Result<Option<ChunkRow>> {
+    /// Best chunk (lowest index) for a doc — used when the graph stage
+    /// injects factually-connected docs that hybrid search didn't surface.
+    pub fn first_chunk_for_page(&self, doc_id: i64) -> Result<Option<ChunkRow>> {
         use rusqlite::OptionalExtension;
         Ok(self
             .conn
             .query_row(
-                "SELECT id, page_id, heading_path, text FROM chunks
-                 WHERE page_id = ?1 ORDER BY chunk_index LIMIT 1",
-                [page_id],
+                "SELECT id, doc_id, heading_path, text FROM chunks
+                 WHERE doc_id = ?1 ORDER BY chunk_index LIMIT 1",
+                [doc_id],
                 |r| {
                     Ok(ChunkRow {
                         id: r.get(0)?,
-                        page_id: r.get(1)?,
+                        doc_id: r.get(1)?,
                         heading_path: r.get(2)?,
                         text: r.get(3)?,
                     })

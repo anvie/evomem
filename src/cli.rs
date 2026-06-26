@@ -60,9 +60,9 @@ pub enum Command {
         #[arg(long, default_value = "balanced")]
         mode: Mode,
     },
-    /// Traverse typed edges from a page (multi-hop)
+    /// Traverse typed edges from a doc (multi-hop)
     GraphQuery {
-        /// Start page: slug, title, or alias
+        /// Start doc: slug, title, or alias
         start: String,
         /// Filter by edge type (founded|invested_in|works_at|advises|attended|mentions|custom)
         #[arg(long)]
@@ -70,9 +70,9 @@ pub enum Command {
         #[arg(long, default_value_t = 2)]
         hops: usize,
     },
-    /// Show a page's metadata and content
-    Page { slug: String },
-    /// Validate KB frontmatter (title, description, type ∈ note|session|group)
+    /// Show a doc's metadata and content
+    Doc { slug: String },
+    /// Validate doc frontmatter (title, description, type ∈ note|session|group|person|place|venue|organization|company|product|contact)
     Validate {
         /// Validate a single markdown file (overrides the recency filter)
         path: Option<String>,

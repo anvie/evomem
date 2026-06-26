@@ -1,5 +1,5 @@
-//! Graph augmentation: after hybrid search finds seed pages, walk typed edges
-//! to pull in factually-connected pages that embeddings and keywords missed,
+//! Graph augmentation: after hybrid search finds seed docs, walk typed edges
+//! to pull in factually-connected docs that embeddings and keywords missed,
 //! and boost hits that are graph-adjacent to other hits.
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -9,7 +9,7 @@ use crate::config::SourceTiers;
 use crate::error::Result;
 use crate::store::Store;
 
-/// Score multiplier for candidates adjacent to another seed page.
+/// Score multiplier for candidates adjacent to another seed doc.
 const ADJACENCY_BOOST: f32 = 1.15;
 /// Injected neighbor score = INJECT_ALPHA * max_seed_score * DECAY^hop.
 const INJECT_ALPHA: f32 = 0.5;
@@ -18,7 +18,7 @@ const DECAY: f32 = 0.6;
 /// preferring typed edges over plain `mentions` when truncating. A daily-log
 /// hub with thousands of inbound mentions must not flood BFS.
 const MAX_NEIGHBORS_PER_NODE: usize = 64;
-/// Hub guard: cap on pages injected into the candidate set per query.
+/// Hub guard: cap on docs injected into the candidate set per query.
 const MAX_INJECTED: usize = 32;
 
 /// Truncate a neighbor list for BFS expansion, keeping typed edges first.
@@ -32,17 +32,17 @@ fn cap_neighbors(
     edges
 }
 
-/// A page pulled in (or boosted) by traversal.
+/// A doc pulled in (or boosted) by traversal.
 #[derive(Debug, Clone)]
 pub struct GraphResult {
-    pub page_id: i64,
+    pub doc_id: i64,
     pub score: f32,
     pub injected: bool,
 }
 
-/// BFS from seed pages over typed edges up to `hops`. Returns adjusted scores
-/// for seed pages (adjacency boost) plus injected neighbors with decayed
-/// scores. `seed_scores` maps page_id -> current best fused score.
+/// BFS from seed docs over typed edges up to `hops`. Returns adjusted scores
+/// for seed docs (adjacency boost) plus injected neighbors with decayed
+/// scores. `seed_scores` maps doc_id -> current best fused score.
 pub fn augment(
     store: &Store,
     seed_scores: &HashMap<i64, f32>,
@@ -57,23 +57,23 @@ pub fn augment(
     let mut queue: VecDeque<i64> = seeds.iter().copied().collect();
     let mut adjacent_to_seed: HashSet<i64> = HashSet::new();
 
-    while let Some(page) = queue.pop_front() {
-        let d = dist[&page];
+    while let Some(doc) = queue.pop_front() {
+        let d = dist[&doc];
         if d >= hops {
             continue;
         }
-        for edge in cap_neighbors(store.neighbors(page, None)?) {
-            let other = if edge.src_page_id == page {
-                match edge.dst_page_id {
+        for edge in cap_neighbors(store.neighbors(doc, None)?) {
+            let other = if edge.src_doc_id == doc {
+                match edge.dst_doc_id {
                     Some(id) => id,
                     None => continue,
                 }
             } else {
-                edge.src_page_id
+                edge.src_doc_id
             };
             if seeds.contains(&other) && d == 0 {
                 adjacent_to_seed.insert(other);
-                adjacent_to_seed.insert(page);
+                adjacent_to_seed.insert(doc);
             }
             if let std::collections::hash_map::Entry::Vacant(e) = dist.entry(other) {
                 e.insert(d + 1);
@@ -82,19 +82,19 @@ pub fn augment(
         }
     }
 
-    for (&page_id, &score) in seed_scores {
-        let boosted = if adjacent_to_seed.contains(&page_id) {
+    for (&doc_id, &score) in seed_scores {
+        let boosted = if adjacent_to_seed.contains(&doc_id) {
             score * ADJACENCY_BOOST
         } else {
             score
         };
         out.push(GraphResult {
-            page_id,
+            doc_id,
             score: boosted,
             injected: false,
         });
     }
-    // Closest (then lowest-id) non-seed pages first; cap total injections.
+    // Closest (then lowest-id) non-seed docs first; cap total injections.
     let mut injectable: Vec<(i64, usize)> = dist
         .iter()
         .filter(|(_, &d)| d > 0)
@@ -102,12 +102,12 @@ pub fn augment(
         .collect();
     injectable.sort_by_key(|&(id, d)| (d, id));
     let mut injected = 0;
-    for (page_id, d) in injectable {
+    for (doc_id, d) in injectable {
         if injected >= MAX_INJECTED {
             break;
         }
         // Skip hard-excluded sources even when graph-connected.
-        if let Some(p) = store.get_page_by_id(page_id)? {
+        if let Some(p) = store.get_doc_by_id(doc_id)? {
             if SourceTiers::is_excluded(&p.source_dir) {
                 continue;
             }
@@ -116,7 +116,7 @@ pub fn augment(
         }
         let score = INJECT_ALPHA * max_seed * DECAY.powi(d as i32 - 1);
         out.push(GraphResult {
-            page_id,
+            doc_id,
             score,
             injected: true,
         });
@@ -125,27 +125,27 @@ pub fn augment(
     Ok(out)
 }
 
-/// Multi-hop traversal for `graph-query`: BFS from a start page, optionally
+/// Multi-hop traversal for `graph-query`: BFS from a start doc, optionally
 /// filtered by edge type, returning the discovered edges with hop counts.
 pub fn traverse(
     store: &Store,
-    start_page_id: i64,
+    start_doc_id: i64,
     edge_type: Option<&str>,
     hops: usize,
 ) -> Result<Vec<GraphEdgeDto>> {
-    let mut dist: HashMap<i64, usize> = HashMap::from([(start_page_id, 0)]);
-    let mut queue = VecDeque::from([start_page_id]);
+    let mut dist: HashMap<i64, usize> = HashMap::from([(start_doc_id, 0)]);
+    let mut queue = VecDeque::from([start_doc_id]);
     let mut edges = Vec::new();
     let mut seen_edges: HashSet<(i64, String, String)> = HashSet::new();
 
-    while let Some(page) = queue.pop_front() {
-        let d = dist[&page];
+    while let Some(doc) = queue.pop_front() {
+        let d = dist[&doc];
         if d >= hops {
             continue;
         }
-        for edge in store.neighbors(page, edge_type)? {
+        for edge in store.neighbors(doc, edge_type)? {
             let key = (
-                edge.src_page_id,
+                edge.src_doc_id,
                 edge.dst_slug.clone(),
                 edge.edge_type.clone(),
             );
@@ -158,13 +158,13 @@ pub fn traverse(
                 });
             }
             // Dangling destinations are reported above but never traversed.
-            let other = if edge.src_page_id == page {
-                match edge.dst_page_id {
+            let other = if edge.src_doc_id == doc {
+                match edge.dst_doc_id {
                     Some(id) => id,
                     None => continue,
                 }
             } else {
-                edge.src_page_id
+                edge.src_doc_id
             };
             if let std::collections::hash_map::Entry::Vacant(e) = dist.entry(other) {
                 e.insert(d + 1);

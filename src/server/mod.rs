@@ -13,7 +13,7 @@ use axum::{Json, Router};
 use lru::LruCache;
 use serde::Deserialize;
 
-use crate::api::{ApiError, CaptureRequest, PageResponse};
+use crate::api::{ApiError, CaptureRequest, DocResponse};
 use crate::embed::Embedder;
 use crate::error::{EvoError, Result};
 use crate::model::Mode;
@@ -43,7 +43,7 @@ pub fn serve(store: Store, embedder: Box<dyn Embedder>, host: &str, port: u16) -
         .route("/api/think", get(api_think))
         .route("/api/graph", get(api_graph))
         .route("/api/stats", get(api_stats))
-        .route("/api/pages/{*slug}", get(api_page))
+        .route("/api/docs/{*slug}", get(api_page))
         .route("/api/capture", post(api_capture))
         .route("/api/sync", post(api_sync))
         .with_state(state);
@@ -69,7 +69,7 @@ struct AppErr(EvoError);
 impl IntoResponse for AppErr {
     fn into_response(self) -> Response {
         let status = match &self.0 {
-            EvoError::PageNotFound(_) => StatusCode::NOT_FOUND,
+            EvoError::DocNotFound(_) => StatusCode::NOT_FOUND,
             EvoError::NotInitialized(_) => StatusCode::CONFLICT,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
@@ -203,13 +203,13 @@ async fn api_graph(
     let key = cache_key(&("graph", &p.start, &p.edge, p.hops));
     cached_json(state, key, move |app| {
         let store = lock(&app.store);
-        let page = store
-            .resolve_page(&p.start)?
-            .ok_or_else(|| EvoError::PageNotFound(p.start.clone()))?;
+        let doc = store
+            .resolve_doc(&p.start)?
+            .ok_or_else(|| EvoError::DocNotFound(p.start.clone()))?;
         let edges =
-            search::graph::traverse(&store, page.id, p.edge.as_deref(), p.hops.unwrap_or(2))?;
+            search::graph::traverse(&store, doc.id, p.edge.as_deref(), p.hops.unwrap_or(2))?;
         let resp = crate::api::GraphResponse {
-            start: page.slug,
+            start: doc.slug,
             edges,
             cached: false,
         };
@@ -232,20 +232,20 @@ async fn api_stats(
 async fn api_page(
     State(state): State<Shared>,
     AxPath(slug): AxPath<String>,
-) -> std::result::Result<Json<PageResponse>, AppErr> {
+) -> std::result::Result<Json<DocResponse>, AppErr> {
     let resp = blocking(state, move |app| {
         let store = lock(&app.store);
-        let page = store
-            .resolve_page(&slug)?
-            .ok_or_else(|| EvoError::PageNotFound(slug.clone()))?;
-        let content = std::fs::read_to_string(store.brain_root.join(format!("{}.md", page.slug)))
+        let doc = store
+            .resolve_doc(&slug)?
+            .ok_or_else(|| EvoError::DocNotFound(slug.clone()))?;
+        let content = std::fs::read_to_string(store.brain_root.join(format!("{}.md", doc.slug)))
             .unwrap_or_default();
-        Ok(PageResponse {
-            slug: page.slug,
-            title: page.title,
-            page_type: page.page_type,
-            tags: page.tags,
-            updated_at: page.updated_at,
+        Ok(DocResponse {
+            slug: doc.slug,
+            title: doc.title,
+            doc_type: doc.doc_type,
+            tags: doc.tags,
+            updated_at: doc.updated_at,
             content,
         })
     })

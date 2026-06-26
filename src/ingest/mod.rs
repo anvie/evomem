@@ -11,7 +11,7 @@ use walkdir::WalkDir;
 use crate::embed::Embedder;
 use crate::error::Result;
 use crate::model::ChunkDraft;
-use crate::store::pages::PageUpsert;
+use crate::store::docs::DocUpsert;
 use crate::store::Store;
 
 /// Files larger than this are skipped (and reported) instead of chunked and
@@ -43,12 +43,12 @@ pub struct SyncReport {
 
 /// Sync the knowledge repo (markdown files under `brain_root`) into the store:
 /// scan → content-hash diff → parse/chunk/embed/link per changed file (one
-/// transaction each) → soft-delete pages missing from disk → rename detection
+/// transaction each) → soft-delete docs missing from disk → rename detection
 /// → re-resolve dangling links. Markdown on disk is the source of truth.
 ///
 /// Per-file failures (bad encoding, malformed frontmatter, oversized files)
 /// are collected into `SyncReport.errors`; they never abort the sync, and the
-/// failing file's existing page (if any) is left untouched rather than
+/// failing file's existing doc (if any) is left untouched rather than
 /// soft-deleted.
 pub fn sync_dir(store: &Store, embedder: &dyn Embedder) -> Result<SyncReport> {
     let root = store.brain_root.clone();
@@ -100,7 +100,7 @@ pub fn sync_dir(store: &Store, embedder: &dyn Embedder) -> Result<SyncReport> {
             }
         };
         let hash = blake3::hash(content.as_bytes()).to_hex().to_string();
-        let is_new = match store.page_hash(&slug)? {
+        let is_new = match store.doc_hash(&slug)? {
             Some(h) if h == hash => {
                 report.unchanged += 1;
                 continue;
@@ -135,8 +135,8 @@ pub fn sync_dir(store: &Store, embedder: &dyn Embedder) -> Result<SyncReport> {
     let deleted = store.soft_delete_missing(&live_slugs, &now)?;
     report.deleted = deleted.len();
 
-    // Rename detection: a soft-deleted page whose content hash matches exactly
-    // one page added this run is a move — repoint inbound links to the new
+    // Rename detection: a soft-deleted doc whose content hash matches exactly
+    // one doc added this run is a move — repoint inbound links to the new
     // slug. Ambiguous matches (duplicate content) are left dangling: never guess.
     let mut deleted_by_hash: HashMap<&str, Vec<&str>> = HashMap::new();
     for (slug, hash) in &deleted {
@@ -178,8 +178,8 @@ pub fn sync_one(
 
     let mut drafts = chunker::chunk(&body);
     if drafts.is_empty() {
-        // Frontmatter-only page: index the title as its single chunk so the
-        // page is still reachable through lexical and vector search.
+        // Frontmatter-only doc: index the title as its single chunk so the
+        // doc is still reachable through lexical and vector search.
         drafts.push(ChunkDraft {
             heading_path: String::new(),
             text: title.clone(),
@@ -188,16 +188,16 @@ pub fn sync_one(
     let texts: Vec<&str> = drafts.iter().map(|d| d.text.as_str()).collect();
     let embeddings = embedder.embed_batch(&texts)?;
 
-    let page_dir = slug.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
-    let links = linker::extract_links(&body, page_dir);
+    let doc_dir = slug.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+    let links = linker::extract_links(&body, doc_dir);
 
     store.begin()?;
     let result = (|| -> Result<()> {
-        let page_id = store.upsert_page(
-            &PageUpsert {
+        let doc_id = store.upsert_page(
+            &DocUpsert {
                 slug,
                 title: &title,
-                page_type: fm.page_type.as_deref().unwrap_or("note"),
+                doc_type: fm.doc_type.as_deref().unwrap_or("note"),
                 source_dir: &source_dir,
                 tags: &fm.tags,
                 content_hash: hash,
@@ -207,8 +207,8 @@ pub fn sync_one(
             },
             now,
         )?;
-        store.replace_chunks_for_page(page_id, &title, &drafts, &embeddings)?;
-        store.replace_links_for_page(page_id, &links)?;
+        store.replace_chunks_for_page(doc_id, &title, &drafts, &embeddings)?;
+        store.replace_links_for_doc(doc_id, &links)?;
         Ok(())
     })();
     match result {

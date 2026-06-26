@@ -15,7 +15,7 @@ pub struct SearchHit {
     pub snippet: String,
     pub score: f32,
     pub evidence: Evidence,
-    pub page_type: String,
+    pub doc_type: String,
     pub source_dir: String,
     pub updated_at: Option<String>,
 }
@@ -44,7 +44,7 @@ pub struct ThinkFact {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GapKind {
-    StalePage,
+    StaleDoc,
     UnknownEntity,
     DanglingLink,
     LowConfidence,
@@ -85,14 +85,14 @@ pub struct GraphResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatsResponse {
-    pub pages: i64,
-    pub deleted_pages: i64,
+    pub docs: i64,
+    pub deleted_docs: i64,
     pub chunks: i64,
     pub indexed_words: i64,
     pub links: i64,
     pub dangling_links: i64,
     pub links_by_type: Vec<(String, i64)>,
-    pub pages_by_source: Vec<(String, i64)>,
+    pub docs_by_source: Vec<(String, i64)>,
     /// When the knowledge store was last synced from disk — staleness signal for
     /// clients of a long-running server.
     #[serde(default)]
@@ -113,10 +113,10 @@ pub struct CaptureResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PageResponse {
+pub struct DocResponse {
     pub slug: String,
     pub title: String,
-    pub page_type: String,
+    pub doc_type: String,
     pub tags: Vec<String>,
     pub updated_at: Option<String>,
     pub content: String,

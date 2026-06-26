@@ -2,7 +2,7 @@
 //! operations, returning the same DTOs so output rendering is shared.
 
 use crate::api::{
-    CaptureRequest, CaptureResponse, GraphResponse, PageResponse, SearchResponse, StatsResponse,
+    CaptureRequest, CaptureResponse, GraphResponse, DocResponse, SearchResponse, StatsResponse,
     ThinkResponse,
 };
 use crate::error::{EvoError, Result};
@@ -101,8 +101,8 @@ impl RemoteClient {
         self.get("/api/stats", &[])
     }
 
-    pub fn page(&self, slug: &str) -> Result<PageResponse> {
-        self.get(&format!("/api/pages/{slug}"), &[])
+    pub fn doc(&self, slug: &str) -> Result<DocResponse> {
+        self.get(&format!("/api/docs/{slug}"), &[])
     }
 
     pub fn capture(&self, req: &CaptureRequest) -> Result<CaptureResponse> {
