@@ -72,7 +72,7 @@ pub enum Command {
     },
     /// Show a doc's metadata and content
     Doc { slug: String },
-    /// Validate doc frontmatter (title, description, type ∈ note|session|group|person|place|venue|organization|company|product|contact)
+    /// Validate doc frontmatter (title, description, type ∈ note|session|group|person|place|venue|event|organization|company|product|contact)
     Validate {
         /// Validate a single markdown file (overrides the recency filter)
         path: Option<String>,

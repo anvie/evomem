@@ -3,8 +3,8 @@
 //! Enforces the knowledge-base file standard: every markdown doc in the brain
 //! must carry frontmatter with non-empty `title`, `description`, and `type`,
 //! where `type` is one of the values in [`VALID_TYPES`] (note/session/group
-//! plus the entity-like types person/place/venue/organization/company/product/
-//! contact).
+//! plus the entity-like types person/place/venue/event/organization/company/
+//! product/contact).
 //!
 //! Validation never aborts on a bad file — each problem is collected into the
 //! report (mirroring `sync`). The command exits 0 even when files are invalid;
@@ -24,13 +24,14 @@ use crate::store::Store;
 ///
 /// `note` is generic prose; `session`/`group` are workspace `index.md` docs;
 /// the rest are entity-like docs that double as graph nodes.
-pub const VALID_TYPES: [&str; 10] = [
+pub const VALID_TYPES: [&str; 11] = [
     "note",
     "session",
     "group",
     "person",
     "place",
     "venue",
+    "event",
     "organization",
     "company",
     "product",
@@ -219,7 +220,7 @@ mod tests {
 
     #[test]
     fn entity_like_types_pass() {
-        for ty in ["person", "place", "venue", "organization", "company", "product", "contact"] {
+        for ty in ["person", "place", "venue", "event", "organization", "company", "product", "contact"] {
             assert!(check(&fm(Some("T"), Some("D"), Some(ty))).is_none(), "{ty} should be valid");
         }
     }
