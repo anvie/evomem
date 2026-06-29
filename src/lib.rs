@@ -3,6 +3,7 @@ pub mod capture;
 pub mod cli;
 pub mod client;
 pub mod config;
+pub mod contradiction;
 pub mod embed;
 pub mod error;
 pub mod hygiene;

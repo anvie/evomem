@@ -143,7 +143,29 @@ pub fn think(
         });
     }
 
-    // 4. Low confidence: nothing strong matched.
+    // 4. Open contradictions touching a cited doc — a contested fact.
+    let cited_slugs: Vec<String> = facts.iter().map(|f| f.slug.clone()).collect();
+    for c in store.open_contradictions_touching(&cited_slugs)? {
+        let about = if c.edge_type.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", c.edge_type)
+        };
+        let detail = if c.description.is_empty() {
+            String::new()
+        } else {
+            format!(": {}", c.description)
+        };
+        gaps.push(Gap {
+            kind: GapKind::Contradiction,
+            message: format!(
+                "\"{}\" vs \"{}\"{about} is an open contradiction (#{}){detail} — resolve before relying on either.",
+                c.item_a, c.item_b, c.id,
+            ),
+        });
+    }
+
+    // 5. Low confidence: nothing strong matched.
     let weak = facts.is_empty()
         || facts
             .iter()

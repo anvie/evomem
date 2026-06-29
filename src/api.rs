@@ -56,6 +56,8 @@ pub enum GapKind {
     LowConfidence,
     /// A cited doc's provenance confidence is below the trust floor.
     LowTrust,
+    /// A cited doc is one side of an open (unresolved) contradiction.
+    Contradiction,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,6 +100,9 @@ pub struct StatsResponse {
     /// Live docs hidden as superseded near-duplicates (see `consolidate`).
     #[serde(default)]
     pub superseded_docs: i64,
+    /// Open (unresolved) contradictions in the store.
+    #[serde(default)]
+    pub open_contradictions: i64,
     pub chunks: i64,
     pub indexed_words: i64,
     pub links: i64,

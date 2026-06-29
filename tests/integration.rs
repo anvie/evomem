@@ -885,3 +885,115 @@ fn think_flags_low_trust_and_per_item_stale() {
         resp.gaps
     );
 }
+
+// ── Contradiction tracking ───────────────────────────────────────────────
+
+#[test]
+fn contradiction_flag_is_order_independent_and_resolvable() {
+    let (_dir, store) = synced_store(&[("n/x.md", "---\ntitle: X\ntype: note\n---\nbody\n")]);
+    let now = "2026-06-13T00:00:00Z";
+    let id = store
+        .flag_contradiction(
+            "people/alice",
+            "people/alice-2",
+            Some("works_at"),
+            "dup",
+            now,
+        )
+        .unwrap();
+    // Re-flagging the same pair in the other order is a no-op (same row).
+    let id2 = store
+        .flag_contradiction(
+            "people/alice-2",
+            "people/alice",
+            Some("works_at"),
+            "dup",
+            now,
+        )
+        .unwrap();
+    assert_eq!(id, id2, "order-independent dedup");
+    assert_eq!(store.open_contradiction_count().unwrap(), 1);
+
+    let open = store.list_contradictions(true).unwrap();
+    assert_eq!(open.len(), 1);
+    assert_eq!(open[0].item_a, "people/alice"); // stored sorted
+    assert_eq!(open[0].item_b, "people/alice-2");
+
+    assert!(store
+        .resolve_contradiction(id, Some("alice-2 is canonical"), Some("binsar"), now)
+        .unwrap());
+    assert_eq!(store.open_contradiction_count().unwrap(), 0);
+    let all = store.list_contradictions(false).unwrap();
+    assert_eq!(all[0].status, "resolved");
+    assert_eq!(all[0].resolution.as_deref(), Some("alice-2 is canonical"));
+    // Resolving a non-existent id reports false rather than erroring.
+    assert!(!store.resolve_contradiction(9999, None, None, now).unwrap());
+}
+
+#[test]
+fn detect_flags_functional_edge_conflicts_and_think_surfaces_them() {
+    // Alice asserts works_at to two different companies — a contradiction.
+    let (_dir, store) = synced_store(&[
+        (
+            "people/alice.md",
+            "---\ntitle: Alice\ntype: person\n---\nAlice is an engineer.\n\n> **works_at:** [Acme](../companies/acme.md)\n> **works_at:** [Globex](../companies/globex.md)\n",
+        ),
+        (
+            "companies/acme.md",
+            "---\ntitle: Acme\ntype: company\n---\nAcme is a company.\n",
+        ),
+        (
+            "companies/globex.md",
+            "---\ntitle: Globex\ntype: company\n---\nGlobex is a company.\n",
+        ),
+    ]);
+    let now = "2026-06-13T00:00:00Z";
+    let report = evomem::contradiction::detect_contradictions(&store, now).unwrap();
+    assert_eq!(report.flagged, 1, "{:?}", report.conflicts);
+    let c = &report.conflicts[0];
+    assert_eq!(c.edge_type, "works_at");
+    assert_eq!(c.item_a, "companies/acme"); // sorted
+    assert_eq!(c.item_b, "companies/globex");
+    assert!(c.new);
+
+    // Idempotent: a second pass flags nothing new.
+    let again = evomem::contradiction::detect_contradictions(&store, now).unwrap();
+    assert_eq!(again.flagged, 0);
+    assert!(again.conflicts.iter().all(|c| !c.new));
+    assert_eq!(store.open_contradiction_count().unwrap(), 1);
+
+    // think surfaces the open contradiction when a side is cited.
+    let embedder = HashEmbedder;
+    let when = chrono::Utc.with_ymd_and_hms(2026, 6, 13, 0, 0, 0).unwrap();
+    let resp = think::think(&store, &embedder, "Acme", Mode::Balanced, when).unwrap();
+    assert!(
+        resp.gaps
+            .iter()
+            .any(|g| matches!(g.kind, evomem::api::GapKind::Contradiction)),
+        "contradiction gap missing: {:?}",
+        resp.gaps
+    );
+}
+
+#[test]
+fn detect_ignores_many_valued_relations() {
+    // `advises` is not in FUNCTIONAL_EDGES → two targets is not a conflict.
+    let (_dir, store) = synced_store(&[
+        (
+            "people/mentor.md",
+            "---\ntitle: Mentor\ntype: person\n---\n> **advises:** [Acme](../companies/acme.md)\n> **advises:** [Globex](../companies/globex.md)\n",
+        ),
+        (
+            "companies/acme.md",
+            "---\ntitle: Acme\ntype: company\n---\nAcme.\n",
+        ),
+        (
+            "companies/globex.md",
+            "---\ntitle: Globex\ntype: company\n---\nGlobex.\n",
+        ),
+    ]);
+    let report =
+        evomem::contradiction::detect_contradictions(&store, "2026-06-13T00:00:00Z").unwrap();
+    assert_eq!(report.flagged, 0, "{:?}", report.conflicts);
+    assert_eq!(store.open_contradiction_count().unwrap(), 0);
+}

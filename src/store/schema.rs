@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use crate::error::Result;
 
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 
 const DDL: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -61,6 +61,24 @@ CREATE TABLE IF NOT EXISTS provenance (
   verified_at      TEXT,
   stale_after_days INTEGER
 );
+
+-- Contradiction tracking: flagged conflicts between two knowledge items
+-- (addressed by slug), resolvable by id. Items are stored sorted (a <= b) so
+-- a pair is recorded once regardless of order; edge_type '' = unspecified.
+CREATE TABLE IF NOT EXISTS contradictions (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_a      TEXT NOT NULL,
+  item_b      TEXT NOT NULL,
+  edge_type   TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  status      TEXT NOT NULL DEFAULT 'open',
+  resolution  TEXT,
+  resolved_by TEXT,
+  created_at  TEXT NOT NULL,
+  resolved_at TEXT,
+  UNIQUE(item_a, item_b, edge_type)
+);
+CREATE INDEX IF NOT EXISTS idx_contradictions_open ON contradictions(status);
 
 -- Inverted index for Meilisearch-style lexical ranking (no FTS5/BM25).
 -- attr: 0 = title, 1 = heading_path, 2 = body text.

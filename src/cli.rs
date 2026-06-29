@@ -95,6 +95,11 @@ pub enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Track conflicting facts: flag, resolve, list, or auto-detect contradictions
+    Contradiction {
+        #[command(subcommand)]
+        action: ContradictionAction,
+    },
     /// Knowledge store statistics
     Stats,
     /// Run as a standalone REST API server
@@ -104,6 +109,43 @@ pub enum Command {
         #[arg(long, default_value_t = 7700)]
         port: u16,
     },
+}
+
+#[derive(Subcommand)]
+pub enum ContradictionAction {
+    /// Flag two items (by slug) as contradicting each other
+    Flag {
+        /// First item slug
+        a: String,
+        /// Second item slug
+        b: String,
+        /// Relation the conflict is about (optional)
+        #[arg(long)]
+        edge: Option<String>,
+        /// Human description of the conflict
+        #[arg(long)]
+        desc: Option<String>,
+    },
+    /// Mark a contradiction (by id) resolved
+    Resolve {
+        /// Contradiction id (from `contradiction list`)
+        id: i64,
+        /// How it was resolved
+        #[arg(long)]
+        resolution: Option<String>,
+        /// Who resolved it
+        #[arg(long)]
+        by: Option<String>,
+    },
+    /// List contradictions
+    List {
+        /// Only show open (unresolved) ones
+        #[arg(long)]
+        open: bool,
+    },
+    /// Auto-detect conflicts from functional typed edges (same subject +
+    /// relation pointing at two different targets)
+    Detect,
 }
 
 impl clap::builder::ValueParserFactory for Mode {

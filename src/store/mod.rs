@@ -1,4 +1,5 @@
 pub mod chunks;
+pub mod contradictions;
 pub mod docs;
 pub mod hygiene;
 pub mod links;
