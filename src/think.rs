@@ -5,7 +5,7 @@
 use chrono::{DateTime, Utc};
 
 use crate::api::{Gap, GapKind, ThinkFact, ThinkResponse};
-use crate::config::STALE_DAYS;
+use crate::config::{CONFIDENCE_FLOOR, STALE_DAYS};
 use crate::embed::Embedder;
 use crate::error::Result;
 use crate::model::{Evidence, Mode};
@@ -35,28 +35,78 @@ pub fn think(
             lead: lead_sentences(&hit.snippet, 2),
             evidence: hit.evidence,
             updated_at: hit.updated_at.clone(),
+            confidence: hit.confidence,
         });
     }
 
     let mut gaps = Vec::new();
 
-    // 1. Stale docs: cited but not updated in STALE_DAYS. Deduped by slug so
-    // a doc cited through several facts is reported once.
+    // 1. Staleness + trust, provenance-aware. A per-item `stale_after_days`
+    // window (measured from `verified_at` when set) governs the doc; otherwise
+    // we fall back to the global STALE_DAYS update-age heuristic. A cited doc
+    // whose confidence is below the trust floor is flagged low_trust. Both are
+    // deduped by slug so a doc cited through several facts is reported once.
     let mut stale_seen = std::collections::HashSet::new();
+    let mut trust_seen = std::collections::HashSet::new();
     for fact in &facts {
-        if let Some(updated) = fact.updated_at.as_deref().and_then(parse_when) {
-            let age_days = (now - updated).num_days();
-            if age_days > STALE_DAYS && stale_seen.insert(fact.slug.clone()) {
-                gaps.push(Gap {
-                    kind: GapKind::StaleDoc,
-                    message: format!(
-                        "No updates on \"{}\" ({}) since {} ({} weeks ago) — verify before relying on it.",
-                        fact.title,
-                        fact.slug,
-                        updated.format("%Y-%m-%d"),
-                        age_days / 7
-                    ),
-                });
+        let prov = store.get_provenance_by_slug(&fact.slug)?;
+
+        let mut per_item_window = false;
+        if let Some(p) = &prov {
+            if let Some(days) = p.stale_after_days.filter(|d| *d > 0) {
+                per_item_window = true;
+                let reference = p.verified_at.as_deref().or(fact.updated_at.as_deref());
+                if let Some(when) = reference.and_then(parse_when) {
+                    let age_days = (now - when).num_days();
+                    if age_days > days && stale_seen.insert(fact.slug.clone()) {
+                        gaps.push(Gap {
+                            kind: GapKind::StaleDoc,
+                            message: format!(
+                                "\"{}\" ({}) was last verified {} ({age_days}d ago, re-verify every {days}d) — confirm before relying on it.",
+                                fact.title,
+                                fact.slug,
+                                when.format("%Y-%m-%d"),
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+        // Global fallback only when no per-item window applies.
+        if !per_item_window {
+            if let Some(updated) = fact.updated_at.as_deref().and_then(parse_when) {
+                let age_days = (now - updated).num_days();
+                if age_days > STALE_DAYS && stale_seen.insert(fact.slug.clone()) {
+                    gaps.push(Gap {
+                        kind: GapKind::StaleDoc,
+                        message: format!(
+                            "No updates on \"{}\" ({}) since {} ({} weeks ago) — verify before relying on it.",
+                            fact.title,
+                            fact.slug,
+                            updated.format("%Y-%m-%d"),
+                            age_days / 7
+                        ),
+                    });
+                }
+            }
+        }
+
+        if let Some(p) = &prov {
+            if let Some(conf) = p.confidence {
+                if conf < CONFIDENCE_FLOOR && trust_seen.insert(fact.slug.clone()) {
+                    let origin = p
+                        .source
+                        .as_deref()
+                        .map(|s| format!(", source: {s}"))
+                        .unwrap_or_default();
+                    gaps.push(Gap {
+                        kind: GapKind::LowTrust,
+                        message: format!(
+                            "\"{}\" ({}) has low confidence ({conf:.2} < {CONFIDENCE_FLOOR:.2}{origin}) — treat as unverified.",
+                            fact.title, fact.slug,
+                        ),
+                    });
+                }
             }
         }
     }

@@ -25,6 +25,8 @@ struct Candidate {
     vector_sim: f32,
     lexical: Option<lexical::MatchStats>,
     graph_injected: bool,
+    /// Trust level from provenance (0.0–1.0), filled during ranking.
+    confidence: Option<f32>,
 }
 
 /// The full retrieval pipeline:
@@ -97,6 +99,7 @@ pub fn search(
             vector_sim: vec_sims.get(chunk_id).copied().unwrap_or(0.0),
             lexical: lex_stats.get(chunk_id).cloned(),
             graph_injected: false,
+            confidence: None,
         });
     }
 
@@ -118,6 +121,7 @@ pub fn search(
                     vector_sim: 0.0,
                     lexical: None,
                     graph_injected: true,
+                    confidence: None,
                 });
             }
         } else {
@@ -152,6 +156,13 @@ pub fn search(
             };
             c.score *= 1.0 + amp * (-age_days / tau).exp();
         }
+        // Trust prior: a doc you don't trust shouldn't crowd out one you do.
+        // Confidence 1.0 => neutral (×1.0), 0.0 => ×0.6; absent => neutral.
+        let confidence = store.get_provenance(c.doc.id)?.and_then(|p| p.confidence);
+        if let Some(conf) = confidence {
+            c.score *= 0.6 + 0.4 * (conf.clamp(0.0, 1.0) as f32);
+        }
+        c.confidence = confidence.map(|x| x as f32);
         let aliases = doc_aliases(store, c.doc.id)?;
         let alias_hit = aliases.iter().any(|a| a.to_lowercase() == q_norm);
         let title_hit = c.doc.title.to_lowercase() == q_norm
@@ -214,6 +225,7 @@ pub fn search(
             doc_type: c.doc.doc_type,
             source_dir: c.doc.source_dir,
             updated_at: c.doc.updated_at,
+            confidence: c.confidence,
         });
     }
 

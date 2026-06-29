@@ -18,6 +18,9 @@ pub struct SearchHit {
     pub doc_type: String,
     pub source_dir: String,
     pub updated_at: Option<String>,
+    /// Trust level from the doc's provenance (0.0–1.0), when it has any.
+    #[serde(default)]
+    pub confidence: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +42,9 @@ pub struct ThinkFact {
     pub lead: String,
     pub evidence: Evidence,
     pub updated_at: Option<String>,
+    /// Trust level from the doc's provenance (0.0–1.0), when it has any.
+    #[serde(default)]
+    pub confidence: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +54,8 @@ pub enum GapKind {
     UnknownEntity,
     DanglingLink,
     LowConfidence,
+    /// A cited doc's provenance confidence is below the trust floor.
+    LowTrust,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

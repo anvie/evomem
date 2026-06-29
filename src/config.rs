@@ -14,6 +14,9 @@ pub const FUSED_TOP_K: usize = 30;
 pub const HIGH_VECTOR_THRESHOLD: f32 = 0.45;
 /// Pages with no update for this many days are flagged stale by `think`.
 pub const STALE_DAYS: i64 = 45;
+/// Trust floor: a cited doc whose provenance confidence is below this is
+/// down-weighted in ranking and flagged `low_trust` by `think`.
+pub const CONFIDENCE_FLOOR: f64 = 0.4;
 /// Database file name inside the knowledge root.
 pub const DB_FILE: &str = ".evomem.db";
 

@@ -12,6 +12,7 @@ use crate::embed::Embedder;
 use crate::error::Result;
 use crate::model::ChunkDraft;
 use crate::store::docs::DocUpsert;
+use crate::store::provenance::Provenance;
 use crate::store::Store;
 
 /// Files larger than this are skipped (and reported) instead of chunked and
@@ -209,6 +210,16 @@ pub fn sync_one(
         )?;
         store.replace_chunks_for_page(doc_id, &title, &drafts, &embeddings)?;
         store.replace_links_for_doc(doc_id, &links)?;
+        // Trust layer: project the doc's provenance frontmatter (cleared when absent).
+        store.set_provenance(
+            doc_id,
+            &Provenance {
+                source: fm.source.clone(),
+                confidence: fm.confidence,
+                verified_at: fm.verified.clone(),
+                stale_after_days: fm.stale_after,
+            },
+        )?;
         Ok(())
     })();
     match result {

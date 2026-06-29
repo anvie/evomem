@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use crate::error::Result;
 
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 const DDL: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -51,6 +51,16 @@ CREATE TABLE IF NOT EXISTS links (
   PRIMARY KEY (src_doc_id, dst_slug, edge_type)
 );
 CREATE INDEX IF NOT EXISTS idx_links_dst ON links(dst_doc_id);
+
+-- Trust layer: per-doc provenance & freshness, projected from frontmatter on
+-- every sync (1:1 with docs, dropped with the doc via FK cascade).
+CREATE TABLE IF NOT EXISTS provenance (
+  doc_id           INTEGER PRIMARY KEY REFERENCES docs(id) ON DELETE CASCADE,
+  source           TEXT,
+  confidence       REAL,
+  verified_at      TEXT,
+  stale_after_days INTEGER
+);
 
 -- Inverted index for Meilisearch-style lexical ranking (no FTS5/BM25).
 -- attr: 0 = title, 1 = heading_path, 2 = body text.

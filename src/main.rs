@@ -246,9 +246,13 @@ fn render_think(r: &ThinkResponse) {
             } else {
                 format!(" § {}", f.heading_path)
             };
+            let trust = match f.confidence {
+                Some(c) => format!(" · confidence {c:.2}"),
+                None => String::new(),
+            };
             println!(
-                "  • {} — {} [{}{}] ({:?})",
-                f.title, f.lead, f.slug, heading, f.evidence
+                "  • {} — {} [{}{}] ({:?}{})",
+                f.title, f.lead, f.slug, heading, f.evidence, trust
             );
         }
     }

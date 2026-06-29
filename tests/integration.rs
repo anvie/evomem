@@ -777,3 +777,111 @@ fn consolidate_is_idempotent() {
     assert_eq!(first.merged.len(), second.merged.len());
     assert_eq!(store.superseded_count().unwrap(), 1);
 }
+
+// ── Trust layer: provenance ──────────────────────────────────────────────
+
+#[test]
+fn provenance_is_projected_from_frontmatter() {
+    let (_dir, store) = synced_store(&[
+        (
+            "facts/dob.md",
+            "---\ntitle: DOB\ntype: note\nsource: user_stated\nconfidence: 0.95\nverified: 2026-06-01\nstale_after: 0\n---\nBinsar was born in May.\n",
+        ),
+        (
+            "facts/plain.md",
+            "---\ntitle: Plain\ntype: note\n---\nNo trust metadata here.\n",
+        ),
+    ]);
+    let p = store.get_provenance_by_slug("facts/dob").unwrap().unwrap();
+    assert_eq!(p.source.as_deref(), Some("user_stated"));
+    assert!((p.confidence.unwrap() - 0.95).abs() < 1e-9);
+    assert_eq!(p.verified_at.as_deref(), Some("2026-06-01"));
+    assert_eq!(p.stale_after_days, Some(0));
+    // A doc with no trust frontmatter has no provenance row.
+    assert!(store
+        .get_provenance_by_slug("facts/plain")
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn higher_confidence_doc_outranks_lower() {
+    // Two docs identical but for confidence — the trust prior breaks the tie.
+    let (_dir, store) = synced_store(&[
+        (
+            "t/high.md",
+            "---\ntitle: Cache Note\ntype: note\nupdated: 2026-06-01\nconfidence: 0.95\n---\nShared body about caching layer design tradeoffs.\n",
+        ),
+        (
+            "t/low.md",
+            "---\ntitle: Cache Note\ntype: note\nupdated: 2026-06-01\nconfidence: 0.10\n---\nShared body about caching layer design tradeoffs.\n",
+        ),
+    ]);
+    let embedder = HashEmbedder;
+    let resp = search::search(
+        &store,
+        &embedder,
+        "caching layer design tradeoffs",
+        Mode::Balanced,
+    )
+    .unwrap();
+    let high = resp.hits.iter().position(|h| h.slug == "t/high").unwrap();
+    let low = resp.hits.iter().position(|h| h.slug == "t/low").unwrap();
+    assert!(
+        high < low,
+        "high-confidence doc should rank first: {:?}",
+        resp.hits
+    );
+    assert!((resp.hits[high].confidence.unwrap() - 0.95).abs() < 1e-6);
+}
+
+#[test]
+fn think_flags_low_trust_and_per_item_stale() {
+    let (_dir, store) = synced_store(&[
+        (
+            "t/shaky.md",
+            "---\ntitle: Shaky Fact\ntype: note\nupdated: 2026-06-01\nconfidence: 0.2\n---\nThe quarterly revenue target is fifty million.\n",
+        ),
+        (
+            "t/expired.md",
+            "---\ntitle: Expired Fact\ntype: note\nsource: external\nconfidence: 0.9\nverified: 2025-01-01\nstale_after: 30\n---\nThe API key rotation window is ninety days.\n",
+        ),
+    ]);
+    let embedder = HashEmbedder;
+    let now = chrono::Utc.with_ymd_and_hms(2026, 6, 13, 0, 0, 0).unwrap();
+
+    // Low confidence (0.2 < floor) → low_trust gap.
+    let resp = think::think(
+        &store,
+        &embedder,
+        "quarterly revenue target",
+        Mode::Balanced,
+        now,
+    )
+    .unwrap();
+    assert!(
+        resp.gaps
+            .iter()
+            .any(|g| matches!(g.kind, evomem::api::GapKind::LowTrust)),
+        "low_trust gap missing: {:?}",
+        resp.gaps
+    );
+
+    // Per-item window: verified 2025-01-01, stale_after 30d, now 2026 → stale.
+    let resp = think::think(
+        &store,
+        &embedder,
+        "API key rotation window",
+        Mode::Balanced,
+        now,
+    )
+    .unwrap();
+    assert!(
+        resp.gaps
+            .iter()
+            .any(|g| matches!(g.kind, evomem::api::GapKind::StaleDoc)
+                && g.message.contains("verified")),
+        "per-item stale gap missing: {:?}",
+        resp.gaps
+    );
+}
