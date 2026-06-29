@@ -87,6 +87,9 @@ pub struct GraphResponse {
 pub struct StatsResponse {
     pub docs: i64,
     pub deleted_docs: i64,
+    /// Live docs hidden as superseded near-duplicates (see `consolidate`).
+    #[serde(default)]
+    pub superseded_docs: i64,
     pub chunks: i64,
     pub indexed_words: i64,
     pub links: i64,

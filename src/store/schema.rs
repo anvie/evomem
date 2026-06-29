@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use crate::error::Result;
 
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 const DDL: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS docs (
   created_at   TEXT,
   updated_at   TEXT,
   synced_at    TEXT NOT NULL,
-  deleted_at   TEXT
+  deleted_at   TEXT,
+  superseded_by INTEGER REFERENCES docs(id)
 );
 CREATE INDEX IF NOT EXISTS idx_docs_live ON docs(deleted_at) WHERE deleted_at IS NULL;
 
@@ -70,10 +71,30 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
     )?;
     conn.execute_batch(DDL)?;
+    // Additive upgrades for databases created before a column existed. New
+    // tables come from the CREATE-IF-NOT-EXISTS DDL above; only added columns
+    // need a guarded ALTER (SQLite has no `ADD COLUMN IF NOT EXISTS`).
+    add_column_if_missing(conn, "docs", "superseded_by", "INTEGER REFERENCES docs(id)")?;
     conn.execute(
         "INSERT INTO meta(key, value) VALUES ('schema_version', ?1)
-         ON CONFLICT(key) DO NOTHING",
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         [SCHEMA_VERSION.to_string()],
     )?;
+    Ok(())
+}
+
+/// Add `<table>.<column> <decl>` only when the column is absent — an
+/// idempotent stand-in for the `ADD COLUMN IF NOT EXISTS` SQLite lacks, so
+/// reopening an older database upgrades it in place without data loss.
+fn add_column_if_missing(conn: &Connection, table: &str, column: &str, decl: &str) -> Result<()> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let exists = stmt
+        .query_map([], |r| r.get::<_, String>(1))?
+        .filter_map(|c| c.ok())
+        .any(|c| c == column);
+    drop(stmt);
+    if !exists {
+        conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl};"))?;
+    }
     Ok(())
 }

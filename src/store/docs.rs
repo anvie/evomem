@@ -32,6 +32,7 @@ fn row_to_doc(r: &rusqlite::Row) -> rusqlite::Result<Doc> {
         updated_at: r.get("updated_at")?,
         synced_at: r.get("synced_at")?,
         deleted_at: r.get("deleted_at")?,
+        superseded_by: r.get("superseded_by")?,
     })
 }
 

@@ -83,6 +83,18 @@ pub enum Command {
         #[arg(long)]
         all: bool,
     },
+    /// Fold near-duplicate docs into their newest version (memory hygiene).
+    /// Older near-duplicates are marked superseded and drop out of retrieval,
+    /// but remain on disk and in the database for history.
+    Consolidate {
+        /// Minimum Jaccard token overlap (0.0–1.0) to treat two same-type docs
+        /// as duplicates
+        #[arg(long, default_value_t = 0.85)]
+        threshold: f64,
+        /// Preview the merges without writing anything
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Knowledge store statistics
     Stats,
     /// Run as a standalone REST API server

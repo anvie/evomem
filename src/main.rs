@@ -8,10 +8,11 @@ use evomem::cli::{Cli, Command};
 use evomem::client::RemoteClient;
 use evomem::embed::HashEmbedder;
 use evomem::error::EvoError;
+use evomem::hygiene::ConsolidateReport;
 use evomem::ingest::SyncReport;
 use evomem::store::Store;
 use evomem::validate::ValidateReport;
-use evomem::{capture, config, ingest, search, stats, think, validate};
+use evomem::{capture, config, hygiene, ingest, search, stats, think, validate};
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -21,8 +22,13 @@ fn main() -> anyhow::Result<()> {
     if let Some(base) = &cli.server {
         let client = RemoteClient::new(base);
         match &cli.command {
-            Command::Init | Command::Serve { .. } | Command::Validate { .. } => {
-                anyhow::bail!("`init`, `serve`, and `validate` run locally; drop --server for them")
+            Command::Init
+            | Command::Serve { .. }
+            | Command::Validate { .. }
+            | Command::Consolidate { .. } => {
+                anyhow::bail!(
+                    "`init`, `serve`, `validate`, and `consolidate` run locally; drop --server for them"
+                )
             }
             Command::Sync => {
                 let report = client.sync()?;
@@ -148,6 +154,11 @@ fn main() -> anyhow::Result<()> {
                 .context("validate failed")?;
             emit(cli.json, &report, render_validate)?;
         }
+        Command::Consolidate { threshold, dry_run } => {
+            let store = open(knowledge_root, &embedder)?;
+            let report = hygiene::consolidate(&store, *threshold, *dry_run)?;
+            emit(cli.json, &report, render_consolidate)?;
+        }
         Command::Stats => {
             let store = open(knowledge_root, &embedder)?;
             let resp = stats::stats(&store)?;
@@ -263,10 +274,31 @@ fn render_graph(r: &GraphResponse) {
     }
 }
 
+fn render_consolidate(r: &ConsolidateReport) {
+    let note = if r.dry_run {
+        " (dry run — nothing written)"
+    } else {
+        ""
+    };
+    println!(
+        "consolidate: {} scanned | {} merged | threshold {:.2}{}",
+        r.scanned,
+        r.merged.len(),
+        r.threshold,
+        note
+    );
+    for m in &r.merged {
+        println!(
+            "  {} ← {} (jaccard {:.2})",
+            m.survivor, m.duplicate, m.score
+        );
+    }
+}
+
 fn render_stats(s: &StatsResponse) {
     println!(
-        "docs: {} live, {} deleted | chunks: {} | vocabulary: {} words | links: {} ({} dangling)",
-        s.docs, s.deleted_docs, s.chunks, s.indexed_words, s.links, s.dangling_links
+        "docs: {} live, {} superseded, {} deleted | chunks: {} | vocabulary: {} words | links: {} ({} dangling)",
+        s.docs, s.superseded_docs, s.deleted_docs, s.chunks, s.indexed_words, s.links, s.dangling_links
     );
     if !s.links_by_type.is_empty() {
         println!("edges by type:");

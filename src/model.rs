@@ -15,6 +15,10 @@ pub struct Doc {
     pub updated_at: Option<String>,
     pub synced_at: String,
     pub deleted_at: Option<String>,
+    /// Hygiene: id of the newer doc this one was folded into by `consolidate`.
+    /// `Some` => a near-duplicate hidden from retrieval but kept for history.
+    #[serde(default)]
+    pub superseded_by: Option<i64>,
 }
 
 /// Parsed YAML frontmatter. Every field is optional and parsed leniently:

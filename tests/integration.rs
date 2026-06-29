@@ -668,3 +668,112 @@ fn wikilink_to_workspace_index_resolves() {
     let dst = outgoing(&store, note.id, "xyz").expect("edge to xyz exists");
     assert_eq!(dst, Some(idx.id));
 }
+
+// ── Memory hygiene: consolidate ──────────────────────────────────────────
+
+/// Two near-identical `note` docs (differing by one word) plus one unrelated
+/// doc — the canonical consolidate fixture.
+fn dup_fixture() -> [(&'static str, &'static str); 3] {
+    [
+        (
+            "notes/a.md",
+            "---\ntitle: Alice Acme\ntype: note\nupdated: 2026-01-01\n---\nAlice works at Acme Corp on retrieval systems and ranking.\n",
+        ),
+        (
+            "notes/b.md",
+            "---\ntitle: Alice Acme\ntype: note\nupdated: 2026-06-01\n---\nAlice works at Acme Corp on retrieval systems and ranking quality.\n",
+        ),
+        (
+            "notes/c.md",
+            "---\ntitle: Chess\ntype: note\nupdated: 2026-03-01\n---\nBob plays chess every Sunday afternoon downtown.\n",
+        ),
+    ]
+}
+
+#[test]
+fn consolidate_folds_near_duplicates_into_newest_survivor() {
+    let (_dir, store) = synced_store(&dup_fixture());
+    let report = evomem::hygiene::consolidate(&store, 0.8, false).unwrap();
+    // Exactly one fold: older notes/a → newer notes/b. notes/c is untouched.
+    assert_eq!(report.merged.len(), 1, "{:?}", report.merged);
+    assert_eq!(report.merged[0].survivor, "notes/b");
+    assert_eq!(report.merged[0].duplicate, "notes/a");
+    assert!(report.merged[0].score >= 0.8);
+    assert_eq!(store.superseded_count().unwrap(), 1);
+
+    // The superseded doc carries a back-pointer to its survivor.
+    let a = store.get_doc_by_slug("notes/a").unwrap().unwrap();
+    let b = store.get_doc_by_slug("notes/b").unwrap().unwrap();
+    assert_eq!(a.superseded_by, Some(b.id));
+    assert_eq!(b.superseded_by, None);
+
+    // Retrieval: the survivor surfaces, the superseded near-duplicate does not.
+    let embedder = HashEmbedder;
+    let resp = search::search(
+        &store,
+        &embedder,
+        "retrieval systems ranking",
+        Mode::Balanced,
+    )
+    .unwrap();
+    assert!(
+        resp.hits.iter().any(|h| h.slug == "notes/b"),
+        "survivor missing: {:?}",
+        resp.hits
+    );
+    assert!(
+        resp.hits.iter().all(|h| h.slug != "notes/a"),
+        "superseded doc leaked into search: {:?}",
+        resp.hits
+    );
+}
+
+#[test]
+fn consolidate_dry_run_writes_nothing() {
+    let (_dir, store) = synced_store(&dup_fixture());
+    let report = evomem::hygiene::consolidate(&store, 0.8, true).unwrap();
+    assert!(report.dry_run);
+    assert_eq!(report.merged.len(), 1, "preview still computes the fold");
+    // ...but nothing was written.
+    assert_eq!(store.superseded_count().unwrap(), 0);
+    assert_eq!(
+        store
+            .get_doc_by_slug("notes/a")
+            .unwrap()
+            .unwrap()
+            .superseded_by,
+        None
+    );
+}
+
+#[test]
+fn consolidate_only_merges_same_doc_type() {
+    // Same near-identical text, but different `type` → never folded together.
+    let (_dir, store) = synced_store(&[
+        (
+            "notes/a.md",
+            "---\ntitle: Alice Acme\ntype: note\nupdated: 2026-01-01\n---\nAlice works at Acme Corp on retrieval systems and ranking.\n",
+        ),
+        (
+            "people/a.md",
+            "---\ntitle: Alice Acme\ntype: person\nupdated: 2026-06-01\n---\nAlice works at Acme Corp on retrieval systems and ranking.\n",
+        ),
+    ]);
+    let report = evomem::hygiene::consolidate(&store, 0.8, false).unwrap();
+    assert!(
+        report.merged.is_empty(),
+        "cross-type fold: {:?}",
+        report.merged
+    );
+    assert_eq!(store.superseded_count().unwrap(), 0);
+}
+
+#[test]
+fn consolidate_is_idempotent() {
+    let (_dir, store) = synced_store(&dup_fixture());
+    let first = evomem::hygiene::consolidate(&store, 0.8, false).unwrap();
+    let second = evomem::hygiene::consolidate(&store, 0.8, false).unwrap();
+    // Re-running clears and recomputes to the same result — no drift, no chains.
+    assert_eq!(first.merged.len(), second.merged.len());
+    assert_eq!(store.superseded_count().unwrap(), 1);
+}

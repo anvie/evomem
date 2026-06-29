@@ -12,7 +12,7 @@ use crate::config::{
 };
 use crate::embed::Embedder;
 use crate::error::Result;
-use crate::model::{Evidence, Intent, Mode, Doc};
+use crate::model::{Doc, Evidence, Intent, Mode};
 use crate::store::chunks::ChunkRow;
 use crate::store::Store;
 use crate::text::tokenize;
@@ -80,6 +80,11 @@ pub fn search(
         let Some(doc) = store.get_doc_by_id(row.doc_id)? else {
             continue;
         };
+        // Hygiene: a near-duplicate folded into a newer survivor stays out of
+        // retrieval (it's kept only for history).
+        if doc.superseded_by.is_some() {
+            continue;
+        }
         if SourceTiers::is_excluded(&doc.source_dir) {
             continue;
         }
@@ -103,6 +108,9 @@ pub fn search(
                 store.first_chunk_for_page(gr.doc_id)?,
                 store.get_doc_by_id(gr.doc_id)?,
             ) {
+                if doc.superseded_by.is_some() {
+                    continue;
+                }
                 candidates.push(Candidate {
                     chunk,
                     doc,

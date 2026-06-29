@@ -1,6 +1,7 @@
 pub mod chunks;
-pub mod links;
 pub mod docs;
+pub mod hygiene;
+pub mod links;
 pub mod schema;
 pub mod words;
 

@@ -5,6 +5,7 @@ pub mod client;
 pub mod config;
 pub mod embed;
 pub mod error;
+pub mod hygiene;
 pub mod ingest;
 pub mod model;
 pub mod search;
