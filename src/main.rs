@@ -4,14 +4,17 @@ use anyhow::Context;
 use clap::Parser;
 
 use evomem::api::{CaptureRequest, GraphResponse, SearchResponse, StatsResponse, ThinkResponse};
-use evomem::cli::{Cli, Command};
+use evomem::cli::{Cli, Command, ContradictionAction};
 use evomem::client::RemoteClient;
+use evomem::contradiction::{self, DetectReport};
 use evomem::embed::HashEmbedder;
 use evomem::error::EvoError;
+use evomem::hygiene::ConsolidateReport;
 use evomem::ingest::SyncReport;
+use evomem::store::contradictions::Contradiction;
 use evomem::store::Store;
 use evomem::validate::ValidateReport;
-use evomem::{capture, config, ingest, search, stats, think, validate};
+use evomem::{capture, config, hygiene, ingest, search, stats, think, validate};
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -21,8 +24,14 @@ fn main() -> anyhow::Result<()> {
     if let Some(base) = &cli.server {
         let client = RemoteClient::new(base);
         match &cli.command {
-            Command::Init | Command::Serve { .. } | Command::Validate { .. } => {
-                anyhow::bail!("`init`, `serve`, and `validate` run locally; drop --server for them")
+            Command::Init
+            | Command::Serve { .. }
+            | Command::Validate { .. }
+            | Command::Consolidate { .. }
+            | Command::Contradiction { .. } => {
+                anyhow::bail!(
+                    "`init`, `serve`, `validate`, `consolidate`, and `contradiction` run locally; drop --server for them"
+                )
             }
             Command::Sync => {
                 let report = client.sync()?;
@@ -148,6 +157,20 @@ fn main() -> anyhow::Result<()> {
                 .context("validate failed")?;
             emit(cli.json, &report, render_validate)?;
         }
+        Command::Consolidate {
+            threshold,
+            dry_run,
+            source_dir,
+        } => {
+            let store = open(knowledge_root, &embedder)?;
+            let report =
+                hygiene::consolidate(&store, *threshold, *dry_run, source_dir.as_deref())?;
+            emit(cli.json, &report, render_consolidate)?;
+        }
+        Command::Contradiction { action } => {
+            let store = open(knowledge_root, &embedder)?;
+            handle_contradiction(&store, action, cli.json)?;
+        }
         Command::Stats => {
             let store = open(knowledge_root, &embedder)?;
             let resp = stats::stats(&store)?;
@@ -235,9 +258,13 @@ fn render_think(r: &ThinkResponse) {
             } else {
                 format!(" § {}", f.heading_path)
             };
+            let trust = match f.confidence {
+                Some(c) => format!(" · confidence {c:.2}"),
+                None => String::new(),
+            };
             println!(
-                "  • {} — {} [{}{}] ({:?})",
-                f.title, f.lead, f.slug, heading, f.evidence
+                "  • {} — {} [{}{}] ({:?}{})",
+                f.title, f.lead, f.slug, heading, f.evidence, trust
             );
         }
     }
@@ -263,10 +290,115 @@ fn render_graph(r: &GraphResponse) {
     }
 }
 
+fn render_consolidate(r: &ConsolidateReport) {
+    let note = if r.dry_run {
+        " (dry run — nothing written)"
+    } else {
+        ""
+    };
+    println!(
+        "consolidate: {} scanned | {} merged | threshold {:.2}{}",
+        r.scanned,
+        r.merged.len(),
+        r.threshold,
+        note
+    );
+    for m in &r.merged {
+        println!(
+            "  {} ← {} (jaccard {:.2})",
+            m.survivor, m.duplicate, m.score
+        );
+    }
+}
+
+fn handle_contradiction(
+    store: &Store,
+    action: &ContradictionAction,
+    json: bool,
+) -> anyhow::Result<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+    match action {
+        ContradictionAction::Flag { a, b, edge, desc } => {
+            let id = store.flag_contradiction(
+                a,
+                b,
+                edge.as_deref(),
+                desc.as_deref().unwrap_or(""),
+                &now,
+            )?;
+            let c = store
+                .get_contradiction(id)?
+                .ok_or_else(|| EvoError::Other("contradiction vanished after flag".into()))?;
+            emit(json, &c, |c| {
+                println!(
+                    "flagged contradiction #{}: \"{}\" vs \"{}\"",
+                    c.id, c.item_a, c.item_b
+                )
+            })?;
+        }
+        ContradictionAction::Resolve { id, resolution, by } => {
+            let ok =
+                store.resolve_contradiction(*id, resolution.as_deref(), by.as_deref(), &now)?;
+            if !ok {
+                anyhow::bail!("no contradiction with id {id}");
+            }
+            println!("resolved contradiction #{id}");
+        }
+        ContradictionAction::List { open } => {
+            let list = store.list_contradictions(*open)?;
+            emit(json, &list, |l| render_contradiction_list(l))?;
+        }
+        ContradictionAction::Detect => {
+            let report = contradiction::detect_contradictions(store, &now)?;
+            emit(json, &report, render_detect)?;
+        }
+    }
+    Ok(())
+}
+
+fn render_contradiction_list(list: &[Contradiction]) {
+    if list.is_empty() {
+        println!("no contradictions");
+        return;
+    }
+    for c in list {
+        let edge = if c.edge_type.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", c.edge_type)
+        };
+        println!(
+            "#{} {} : \"{}\" vs \"{}\"{}",
+            c.id, c.status, c.item_a, c.item_b, edge
+        );
+        if !c.description.is_empty() {
+            println!("    {}", c.description);
+        }
+        if let Some(r) = &c.resolution {
+            println!("    resolution: {r}");
+        }
+    }
+}
+
+fn render_detect(r: &DetectReport) {
+    println!(
+        "detect: {} conflict(s) seen, {} newly flagged",
+        r.conflicts.len(),
+        r.flagged
+    );
+    for c in &r.conflicts {
+        let tag = if c.new { "NEW" } else { "exists" };
+        println!(
+            "  [{}] {} {} → {} vs {}",
+            tag, c.subject, c.edge_type, c.item_a, c.item_b
+        );
+    }
+}
+
 fn render_stats(s: &StatsResponse) {
     println!(
-        "docs: {} live, {} deleted | chunks: {} | vocabulary: {} words | links: {} ({} dangling)",
-        s.docs, s.deleted_docs, s.chunks, s.indexed_words, s.links, s.dangling_links
+        "docs: {} live, {} superseded, {} deleted | chunks: {} | vocabulary: {} words | links: {} ({} dangling) | contradictions: {} open",
+        s.docs, s.superseded_docs, s.deleted_docs, s.chunks, s.indexed_words, s.links, s.dangling_links, s.open_contradictions
     );
     if !s.links_by_type.is_empty() {
         println!("edges by type:");

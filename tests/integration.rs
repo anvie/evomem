@@ -668,3 +668,332 @@ fn wikilink_to_workspace_index_resolves() {
     let dst = outgoing(&store, note.id, "xyz").expect("edge to xyz exists");
     assert_eq!(dst, Some(idx.id));
 }
+
+// ── Memory hygiene: consolidate ──────────────────────────────────────────
+
+/// Two near-identical `note` docs (differing by one word) plus one unrelated
+/// doc — the canonical consolidate fixture.
+fn dup_fixture() -> [(&'static str, &'static str); 3] {
+    [
+        (
+            "notes/a.md",
+            "---\ntitle: Alice Acme\ntype: note\nupdated: 2026-01-01\n---\nAlice works at Acme Corp on retrieval systems and ranking.\n",
+        ),
+        (
+            "notes/b.md",
+            "---\ntitle: Alice Acme\ntype: note\nupdated: 2026-06-01\n---\nAlice works at Acme Corp on retrieval systems and ranking quality.\n",
+        ),
+        (
+            "notes/c.md",
+            "---\ntitle: Chess\ntype: note\nupdated: 2026-03-01\n---\nBob plays chess every Sunday afternoon downtown.\n",
+        ),
+    ]
+}
+
+#[test]
+fn consolidate_folds_near_duplicates_into_newest_survivor() {
+    let (_dir, store) = synced_store(&dup_fixture());
+    let report = evomem::hygiene::consolidate(&store, 0.8, false).unwrap();
+    // Exactly one fold: older notes/a → newer notes/b. notes/c is untouched.
+    assert_eq!(report.merged.len(), 1, "{:?}", report.merged);
+    assert_eq!(report.merged[0].survivor, "notes/b");
+    assert_eq!(report.merged[0].duplicate, "notes/a");
+    assert!(report.merged[0].score >= 0.8);
+    assert_eq!(store.superseded_count().unwrap(), 1);
+
+    // The superseded doc carries a back-pointer to its survivor.
+    let a = store.get_doc_by_slug("notes/a").unwrap().unwrap();
+    let b = store.get_doc_by_slug("notes/b").unwrap().unwrap();
+    assert_eq!(a.superseded_by, Some(b.id));
+    assert_eq!(b.superseded_by, None);
+
+    // Retrieval: the survivor surfaces, the superseded near-duplicate does not.
+    let embedder = HashEmbedder;
+    let resp = search::search(
+        &store,
+        &embedder,
+        "retrieval systems ranking",
+        Mode::Balanced,
+    )
+    .unwrap();
+    assert!(
+        resp.hits.iter().any(|h| h.slug == "notes/b"),
+        "survivor missing: {:?}",
+        resp.hits
+    );
+    assert!(
+        resp.hits.iter().all(|h| h.slug != "notes/a"),
+        "superseded doc leaked into search: {:?}",
+        resp.hits
+    );
+}
+
+#[test]
+fn consolidate_dry_run_writes_nothing() {
+    let (_dir, store) = synced_store(&dup_fixture());
+    let report = evomem::hygiene::consolidate(&store, 0.8, true).unwrap();
+    assert!(report.dry_run);
+    assert_eq!(report.merged.len(), 1, "preview still computes the fold");
+    // ...but nothing was written.
+    assert_eq!(store.superseded_count().unwrap(), 0);
+    assert_eq!(
+        store
+            .get_doc_by_slug("notes/a")
+            .unwrap()
+            .unwrap()
+            .superseded_by,
+        None
+    );
+}
+
+#[test]
+fn consolidate_only_merges_same_doc_type() {
+    // Same near-identical text, but different `type` → never folded together.
+    let (_dir, store) = synced_store(&[
+        (
+            "notes/a.md",
+            "---\ntitle: Alice Acme\ntype: note\nupdated: 2026-01-01\n---\nAlice works at Acme Corp on retrieval systems and ranking.\n",
+        ),
+        (
+            "people/a.md",
+            "---\ntitle: Alice Acme\ntype: person\nupdated: 2026-06-01\n---\nAlice works at Acme Corp on retrieval systems and ranking.\n",
+        ),
+    ]);
+    let report = evomem::hygiene::consolidate(&store, 0.8, false).unwrap();
+    assert!(
+        report.merged.is_empty(),
+        "cross-type fold: {:?}",
+        report.merged
+    );
+    assert_eq!(store.superseded_count().unwrap(), 0);
+}
+
+#[test]
+fn consolidate_is_idempotent() {
+    let (_dir, store) = synced_store(&dup_fixture());
+    let first = evomem::hygiene::consolidate(&store, 0.8, false).unwrap();
+    let second = evomem::hygiene::consolidate(&store, 0.8, false).unwrap();
+    // Re-running clears and recomputes to the same result — no drift, no chains.
+    assert_eq!(first.merged.len(), second.merged.len());
+    assert_eq!(store.superseded_count().unwrap(), 1);
+}
+
+// ── Trust layer: provenance ──────────────────────────────────────────────
+
+#[test]
+fn provenance_is_projected_from_frontmatter() {
+    let (_dir, store) = synced_store(&[
+        (
+            "facts/dob.md",
+            "---\ntitle: DOB\ntype: note\nsource: user_stated\nconfidence: 0.95\nverified: 2026-06-01\nstale_after: 0\n---\nBinsar was born in May.\n",
+        ),
+        (
+            "facts/plain.md",
+            "---\ntitle: Plain\ntype: note\n---\nNo trust metadata here.\n",
+        ),
+    ]);
+    let p = store.get_provenance_by_slug("facts/dob").unwrap().unwrap();
+    assert_eq!(p.source.as_deref(), Some("user_stated"));
+    assert!((p.confidence.unwrap() - 0.95).abs() < 1e-9);
+    assert_eq!(p.verified_at.as_deref(), Some("2026-06-01"));
+    assert_eq!(p.stale_after_days, Some(0));
+    // A doc with no trust frontmatter has no provenance row.
+    assert!(store
+        .get_provenance_by_slug("facts/plain")
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn higher_confidence_doc_outranks_lower() {
+    // Two docs identical but for confidence — the trust prior breaks the tie.
+    let (_dir, store) = synced_store(&[
+        (
+            "t/high.md",
+            "---\ntitle: Cache Note\ntype: note\nupdated: 2026-06-01\nconfidence: 0.95\n---\nShared body about caching layer design tradeoffs.\n",
+        ),
+        (
+            "t/low.md",
+            "---\ntitle: Cache Note\ntype: note\nupdated: 2026-06-01\nconfidence: 0.10\n---\nShared body about caching layer design tradeoffs.\n",
+        ),
+    ]);
+    let embedder = HashEmbedder;
+    let resp = search::search(
+        &store,
+        &embedder,
+        "caching layer design tradeoffs",
+        Mode::Balanced,
+    )
+    .unwrap();
+    let high = resp.hits.iter().position(|h| h.slug == "t/high").unwrap();
+    let low = resp.hits.iter().position(|h| h.slug == "t/low").unwrap();
+    assert!(
+        high < low,
+        "high-confidence doc should rank first: {:?}",
+        resp.hits
+    );
+    assert!((resp.hits[high].confidence.unwrap() - 0.95).abs() < 1e-6);
+}
+
+#[test]
+fn think_flags_low_trust_and_per_item_stale() {
+    let (_dir, store) = synced_store(&[
+        (
+            "t/shaky.md",
+            "---\ntitle: Shaky Fact\ntype: note\nupdated: 2026-06-01\nconfidence: 0.2\n---\nThe quarterly revenue target is fifty million.\n",
+        ),
+        (
+            "t/expired.md",
+            "---\ntitle: Expired Fact\ntype: note\nsource: external\nconfidence: 0.9\nverified: 2025-01-01\nstale_after: 30\n---\nThe API key rotation window is ninety days.\n",
+        ),
+    ]);
+    let embedder = HashEmbedder;
+    let now = chrono::Utc.with_ymd_and_hms(2026, 6, 13, 0, 0, 0).unwrap();
+
+    // Low confidence (0.2 < floor) → low_trust gap.
+    let resp = think::think(
+        &store,
+        &embedder,
+        "quarterly revenue target",
+        Mode::Balanced,
+        now,
+    )
+    .unwrap();
+    assert!(
+        resp.gaps
+            .iter()
+            .any(|g| matches!(g.kind, evomem::api::GapKind::LowTrust)),
+        "low_trust gap missing: {:?}",
+        resp.gaps
+    );
+
+    // Per-item window: verified 2025-01-01, stale_after 30d, now 2026 → stale.
+    let resp = think::think(
+        &store,
+        &embedder,
+        "API key rotation window",
+        Mode::Balanced,
+        now,
+    )
+    .unwrap();
+    assert!(
+        resp.gaps
+            .iter()
+            .any(|g| matches!(g.kind, evomem::api::GapKind::StaleDoc)
+                && g.message.contains("verified")),
+        "per-item stale gap missing: {:?}",
+        resp.gaps
+    );
+}
+
+// ── Contradiction tracking ───────────────────────────────────────────────
+
+#[test]
+fn contradiction_flag_is_order_independent_and_resolvable() {
+    let (_dir, store) = synced_store(&[("n/x.md", "---\ntitle: X\ntype: note\n---\nbody\n")]);
+    let now = "2026-06-13T00:00:00Z";
+    let id = store
+        .flag_contradiction(
+            "people/alice",
+            "people/alice-2",
+            Some("works_at"),
+            "dup",
+            now,
+        )
+        .unwrap();
+    // Re-flagging the same pair in the other order is a no-op (same row).
+    let id2 = store
+        .flag_contradiction(
+            "people/alice-2",
+            "people/alice",
+            Some("works_at"),
+            "dup",
+            now,
+        )
+        .unwrap();
+    assert_eq!(id, id2, "order-independent dedup");
+    assert_eq!(store.open_contradiction_count().unwrap(), 1);
+
+    let open = store.list_contradictions(true).unwrap();
+    assert_eq!(open.len(), 1);
+    assert_eq!(open[0].item_a, "people/alice"); // stored sorted
+    assert_eq!(open[0].item_b, "people/alice-2");
+
+    assert!(store
+        .resolve_contradiction(id, Some("alice-2 is canonical"), Some("binsar"), now)
+        .unwrap());
+    assert_eq!(store.open_contradiction_count().unwrap(), 0);
+    let all = store.list_contradictions(false).unwrap();
+    assert_eq!(all[0].status, "resolved");
+    assert_eq!(all[0].resolution.as_deref(), Some("alice-2 is canonical"));
+    // Resolving a non-existent id reports false rather than erroring.
+    assert!(!store.resolve_contradiction(9999, None, None, now).unwrap());
+}
+
+#[test]
+fn detect_flags_functional_edge_conflicts_and_think_surfaces_them() {
+    // Alice asserts works_at to two different companies — a contradiction.
+    let (_dir, store) = synced_store(&[
+        (
+            "people/alice.md",
+            "---\ntitle: Alice\ntype: person\n---\nAlice is an engineer.\n\n> **works_at:** [Acme](../companies/acme.md)\n> **works_at:** [Globex](../companies/globex.md)\n",
+        ),
+        (
+            "companies/acme.md",
+            "---\ntitle: Acme\ntype: company\n---\nAcme is a company.\n",
+        ),
+        (
+            "companies/globex.md",
+            "---\ntitle: Globex\ntype: company\n---\nGlobex is a company.\n",
+        ),
+    ]);
+    let now = "2026-06-13T00:00:00Z";
+    let report = evomem::contradiction::detect_contradictions(&store, now).unwrap();
+    assert_eq!(report.flagged, 1, "{:?}", report.conflicts);
+    let c = &report.conflicts[0];
+    assert_eq!(c.edge_type, "works_at");
+    assert_eq!(c.item_a, "companies/acme"); // sorted
+    assert_eq!(c.item_b, "companies/globex");
+    assert!(c.new);
+
+    // Idempotent: a second pass flags nothing new.
+    let again = evomem::contradiction::detect_contradictions(&store, now).unwrap();
+    assert_eq!(again.flagged, 0);
+    assert!(again.conflicts.iter().all(|c| !c.new));
+    assert_eq!(store.open_contradiction_count().unwrap(), 1);
+
+    // think surfaces the open contradiction when a side is cited.
+    let embedder = HashEmbedder;
+    let when = chrono::Utc.with_ymd_and_hms(2026, 6, 13, 0, 0, 0).unwrap();
+    let resp = think::think(&store, &embedder, "Acme", Mode::Balanced, when).unwrap();
+    assert!(
+        resp.gaps
+            .iter()
+            .any(|g| matches!(g.kind, evomem::api::GapKind::Contradiction)),
+        "contradiction gap missing: {:?}",
+        resp.gaps
+    );
+}
+
+#[test]
+fn detect_ignores_many_valued_relations() {
+    // `advises` is not in FUNCTIONAL_EDGES → two targets is not a conflict.
+    let (_dir, store) = synced_store(&[
+        (
+            "people/mentor.md",
+            "---\ntitle: Mentor\ntype: person\n---\n> **advises:** [Acme](../companies/acme.md)\n> **advises:** [Globex](../companies/globex.md)\n",
+        ),
+        (
+            "companies/acme.md",
+            "---\ntitle: Acme\ntype: company\n---\nAcme.\n",
+        ),
+        (
+            "companies/globex.md",
+            "---\ntitle: Globex\ntype: company\n---\nGlobex.\n",
+        ),
+    ]);
+    let report =
+        evomem::contradiction::detect_contradictions(&store, "2026-06-13T00:00:00Z").unwrap();
+    assert_eq!(report.flagged, 0, "{:?}", report.conflicts);
+    assert_eq!(store.open_contradiction_count().unwrap(), 0);
+}

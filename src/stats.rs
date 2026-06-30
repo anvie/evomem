@@ -6,6 +6,8 @@ pub fn stats(store: &Store) -> Result<StatsResponse> {
     let one = |sql: &str| -> Result<i64> { Ok(store.conn.query_row(sql, [], |r| r.get(0))?) };
     let docs = one("SELECT COUNT(*) FROM docs WHERE deleted_at IS NULL")?;
     let deleted_docs = one("SELECT COUNT(*) FROM docs WHERE deleted_at IS NOT NULL")?;
+    let superseded_docs = store.superseded_count()?;
+    let open_contradictions = store.open_contradiction_count()?;
     let chunks = one(
         "SELECT COUNT(*) FROM chunks c JOIN docs p ON p.id = c.doc_id WHERE p.deleted_at IS NULL",
     )?;
@@ -30,6 +32,8 @@ pub fn stats(store: &Store) -> Result<StatsResponse> {
     Ok(StatsResponse {
         docs,
         deleted_docs,
+        superseded_docs,
+        open_contradictions,
         chunks,
         indexed_words,
         links,

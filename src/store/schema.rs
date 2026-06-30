@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use crate::error::Result;
 
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 5;
 
 const DDL: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS docs (
   created_at   TEXT,
   updated_at   TEXT,
   synced_at    TEXT NOT NULL,
-  deleted_at   TEXT
+  deleted_at   TEXT,
+  superseded_by INTEGER REFERENCES docs(id)
 );
 CREATE INDEX IF NOT EXISTS idx_docs_live ON docs(deleted_at) WHERE deleted_at IS NULL;
 
@@ -51,6 +52,34 @@ CREATE TABLE IF NOT EXISTS links (
 );
 CREATE INDEX IF NOT EXISTS idx_links_dst ON links(dst_doc_id);
 
+-- Trust layer: per-doc provenance & freshness, projected from frontmatter on
+-- every sync (1:1 with docs, dropped with the doc via FK cascade).
+CREATE TABLE IF NOT EXISTS provenance (
+  doc_id           INTEGER PRIMARY KEY REFERENCES docs(id) ON DELETE CASCADE,
+  source           TEXT,
+  confidence       REAL,
+  verified_at      TEXT,
+  stale_after_days INTEGER
+);
+
+-- Contradiction tracking: flagged conflicts between two knowledge items
+-- (addressed by slug), resolvable by id. Items are stored sorted (a <= b) so
+-- a pair is recorded once regardless of order; edge_type '' = unspecified.
+CREATE TABLE IF NOT EXISTS contradictions (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_a      TEXT NOT NULL,
+  item_b      TEXT NOT NULL,
+  edge_type   TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  status      TEXT NOT NULL DEFAULT 'open',
+  resolution  TEXT,
+  resolved_by TEXT,
+  created_at  TEXT NOT NULL,
+  resolved_at TEXT,
+  UNIQUE(item_a, item_b, edge_type)
+);
+CREATE INDEX IF NOT EXISTS idx_contradictions_open ON contradictions(status);
+
 -- Inverted index for Meilisearch-style lexical ranking (no FTS5/BM25).
 -- attr: 0 = title, 1 = heading_path, 2 = body text.
 CREATE TABLE IF NOT EXISTS word_index (
@@ -70,10 +99,30 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
     )?;
     conn.execute_batch(DDL)?;
+    // Additive upgrades for databases created before a column existed. New
+    // tables come from the CREATE-IF-NOT-EXISTS DDL above; only added columns
+    // need a guarded ALTER (SQLite has no `ADD COLUMN IF NOT EXISTS`).
+    add_column_if_missing(conn, "docs", "superseded_by", "INTEGER REFERENCES docs(id)")?;
     conn.execute(
         "INSERT INTO meta(key, value) VALUES ('schema_version', ?1)
-         ON CONFLICT(key) DO NOTHING",
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         [SCHEMA_VERSION.to_string()],
     )?;
+    Ok(())
+}
+
+/// Add `<table>.<column> <decl>` only when the column is absent — an
+/// idempotent stand-in for the `ADD COLUMN IF NOT EXISTS` SQLite lacks, so
+/// reopening an older database upgrades it in place without data loss.
+fn add_column_if_missing(conn: &Connection, table: &str, column: &str, decl: &str) -> Result<()> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let exists = stmt
+        .query_map([], |r| r.get::<_, String>(1))?
+        .filter_map(|c| c.ok())
+        .any(|c| c == column);
+    drop(stmt);
+    if !exists {
+        conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl};"))?;
+    }
     Ok(())
 }

@@ -15,6 +15,10 @@ pub struct Doc {
     pub updated_at: Option<String>,
     pub synced_at: String,
     pub deleted_at: Option<String>,
+    /// Hygiene: id of the newer doc this one was folded into by `consolidate`.
+    /// `Some` => a near-duplicate hidden from retrieval but kept for history.
+    #[serde(default)]
+    pub superseded_by: Option<i64>,
 }
 
 /// Parsed YAML frontmatter. Every field is optional and parsed leniently:
@@ -37,6 +41,22 @@ pub struct Frontmatter {
     pub created: Option<String>,
     #[serde(default, deserialize_with = "lenient_string")]
     pub updated: Option<String>,
+    // ── Trust layer (provenance) ──────────────────────────────────────────
+    /// Where this fact came from: user_stated | inferred | external |
+    /// agent_reported (free-form; only a hint for the reader).
+    #[serde(default, deserialize_with = "lenient_string")]
+    pub source: Option<String>,
+    /// How much to trust this doc, 0.0–1.0. Below the confidence floor it is
+    /// down-ranked and flagged by `think`.
+    #[serde(default, deserialize_with = "lenient_f64")]
+    pub confidence: Option<f64>,
+    /// When the doc was last verified (date or RFC3339); staleness is measured
+    /// from here when present, instead of the global update-age fallback.
+    #[serde(default, deserialize_with = "lenient_string")]
+    pub verified: Option<String>,
+    /// Re-verify after this many days. `0`/absent => never goes stale on its own.
+    #[serde(default, deserialize_with = "lenient_i64")]
+    pub stale_after: Option<i64>,
 }
 
 fn yaml_scalar_to_string(v: serde_yaml::Value) -> Option<String> {
@@ -54,6 +74,34 @@ where
 {
     let v: Option<serde_yaml::Value> = serde::Deserialize::deserialize(d)?;
     Ok(v.and_then(yaml_scalar_to_string))
+}
+
+/// Parse an optional float that may arrive as a YAML number or a quoted string
+/// (`confidence: 0.9` or `confidence: "0.9"`); anything else yields `None`.
+fn lenient_f64<'de, D>(d: D) -> std::result::Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v: Option<serde_yaml::Value> = serde::Deserialize::deserialize(d)?;
+    Ok(v.and_then(|v| match v {
+        serde_yaml::Value::Number(n) => n.as_f64(),
+        serde_yaml::Value::String(s) => s.trim().parse::<f64>().ok(),
+        _ => None,
+    }))
+}
+
+/// Parse an optional integer that may arrive as a YAML number (truncating a
+/// float) or a quoted string; anything else yields `None`.
+fn lenient_i64<'de, D>(d: D) -> std::result::Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v: Option<serde_yaml::Value> = serde::Deserialize::deserialize(d)?;
+    Ok(v.and_then(|v| match v {
+        serde_yaml::Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f as i64)),
+        serde_yaml::Value::String(s) => s.trim().parse::<i64>().ok(),
+        _ => None,
+    }))
 }
 
 fn string_or_seq<'de, D>(d: D) -> std::result::Result<Vec<String>, D::Error>

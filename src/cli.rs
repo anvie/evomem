@@ -83,6 +83,30 @@ pub enum Command {
         #[arg(long)]
         all: bool,
     },
+    /// Fold near-duplicate docs into their newest version (memory hygiene).
+    /// Older near-duplicates are marked superseded and drop out of retrieval,
+    /// but remain on disk and in the database for history.
+    Consolidate {
+        /// Minimum Jaccard token overlap (0.0–1.0) to treat two same-type docs
+        /// as duplicates
+        #[arg(long, default_value_t = 0.85)]
+        threshold: f64,
+        /// Preview the merges without writing anything
+        #[arg(long)]
+        dry_run: bool,
+        /// Restrict folding to docs under one source_dir (top-level folder, e.g.
+        /// `memory`). Folding always requires the same type AND source_dir; this
+        /// further limits the whole pass to a single layer so an automated caller
+        /// can consolidate only volatile captures (memory/) and leave
+        /// hand-authored notes and entities untouched. Omit to scan every layer.
+        #[arg(long)]
+        source_dir: Option<String>,
+    },
+    /// Track conflicting facts: flag, resolve, list, or auto-detect contradictions
+    Contradiction {
+        #[command(subcommand)]
+        action: ContradictionAction,
+    },
     /// Knowledge store statistics
     Stats,
     /// Run as a standalone REST API server
@@ -92,6 +116,43 @@ pub enum Command {
         #[arg(long, default_value_t = 7700)]
         port: u16,
     },
+}
+
+#[derive(Subcommand)]
+pub enum ContradictionAction {
+    /// Flag two items (by slug) as contradicting each other
+    Flag {
+        /// First item slug
+        a: String,
+        /// Second item slug
+        b: String,
+        /// Relation the conflict is about (optional)
+        #[arg(long)]
+        edge: Option<String>,
+        /// Human description of the conflict
+        #[arg(long)]
+        desc: Option<String>,
+    },
+    /// Mark a contradiction (by id) resolved
+    Resolve {
+        /// Contradiction id (from `contradiction list`)
+        id: i64,
+        /// How it was resolved
+        #[arg(long)]
+        resolution: Option<String>,
+        /// Who resolved it
+        #[arg(long)]
+        by: Option<String>,
+    },
+    /// List contradictions
+    List {
+        /// Only show open (unresolved) ones
+        #[arg(long)]
+        open: bool,
+    },
+    /// Auto-detect conflicts from functional typed edges (same subject +
+    /// relation pointing at two different targets)
+    Detect,
 }
 
 impl clap::builder::ValueParserFactory for Mode {

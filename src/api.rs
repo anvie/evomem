@@ -18,6 +18,9 @@ pub struct SearchHit {
     pub doc_type: String,
     pub source_dir: String,
     pub updated_at: Option<String>,
+    /// Trust level from the doc's provenance (0.0–1.0), when it has any.
+    #[serde(default)]
+    pub confidence: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +42,9 @@ pub struct ThinkFact {
     pub lead: String,
     pub evidence: Evidence,
     pub updated_at: Option<String>,
+    /// Trust level from the doc's provenance (0.0–1.0), when it has any.
+    #[serde(default)]
+    pub confidence: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +54,10 @@ pub enum GapKind {
     UnknownEntity,
     DanglingLink,
     LowConfidence,
+    /// A cited doc's provenance confidence is below the trust floor.
+    LowTrust,
+    /// A cited doc is one side of an open (unresolved) contradiction.
+    Contradiction,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,6 +97,12 @@ pub struct GraphResponse {
 pub struct StatsResponse {
     pub docs: i64,
     pub deleted_docs: i64,
+    /// Live docs hidden as superseded near-duplicates (see `consolidate`).
+    #[serde(default)]
+    pub superseded_docs: i64,
+    /// Open (unresolved) contradictions in the store.
+    #[serde(default)]
+    pub open_contradictions: i64,
     pub chunks: i64,
     pub indexed_words: i64,
     pub links: i64,
