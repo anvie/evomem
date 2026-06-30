@@ -157,9 +157,14 @@ fn main() -> anyhow::Result<()> {
                 .context("validate failed")?;
             emit(cli.json, &report, render_validate)?;
         }
-        Command::Consolidate { threshold, dry_run } => {
+        Command::Consolidate {
+            threshold,
+            dry_run,
+            source_dir,
+        } => {
             let store = open(knowledge_root, &embedder)?;
-            let report = hygiene::consolidate(&store, *threshold, *dry_run)?;
+            let report =
+                hygiene::consolidate(&store, *threshold, *dry_run, source_dir.as_deref())?;
             emit(cli.json, &report, render_consolidate)?;
         }
         Command::Contradiction { action } => {

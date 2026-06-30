@@ -94,6 +94,13 @@ pub enum Command {
         /// Preview the merges without writing anything
         #[arg(long)]
         dry_run: bool,
+        /// Restrict folding to docs under one source_dir (top-level folder, e.g.
+        /// `memory`). Folding always requires the same type AND source_dir; this
+        /// further limits the whole pass to a single layer so an automated caller
+        /// can consolidate only volatile captures (memory/) and leave
+        /// hand-authored notes and entities untouched. Omit to scan every layer.
+        #[arg(long)]
+        source_dir: Option<String>,
     },
     /// Track conflicting facts: flag, resolve, list, or auto-detect contradictions
     Contradiction {

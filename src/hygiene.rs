@@ -52,9 +52,19 @@ pub struct ConsolidateReport {
 /// `threshold` is the minimum Jaccard token overlap (clamped to `0.0..=1.0`)
 /// for two docs to be considered duplicates. With `dry_run`, the merges are
 /// computed and returned but no `superseded_by` is written — a safe preview.
-pub fn consolidate(store: &Store, threshold: f64, dry_run: bool) -> Result<ConsolidateReport> {
+pub fn consolidate(
+    store: &Store,
+    threshold: f64,
+    dry_run: bool,
+    source_dir: Option<&str>,
+) -> Result<ConsolidateReport> {
     let threshold = threshold.clamp(0.0, 1.0);
     let mut docs = store.live_doc_texts()?;
+    // Optional single-layer scope: an automated caller folds only volatile
+    // captures (e.g. `memory`) and never touches hand-authored notes/entities.
+    if let Some(dir) = source_dir {
+        docs.retain(|d| d.source_dir == dir);
+    }
     // Newest first: the survivor of each duplicate group is the freshest doc.
     // Ties (equal/absent timestamps) break by higher id — also "newer".
     docs.sort_by(|a, b| {
@@ -75,7 +85,14 @@ pub fn consolidate(store: &Store, threshold: f64, dry_run: bool) -> Result<Conso
             continue;
         }
         for j in (i + 1)..docs.len() {
-            if consumed[j] || token_sets[j].is_empty() || docs[j].doc_type != docs[i].doc_type {
+            // Fold only within the same type AND the same source_dir: a private
+            // memory/ doc must never be folded into a knowledge note (both are
+            // type `note`) or vice versa — they are separate layers.
+            if consumed[j]
+                || token_sets[j].is_empty()
+                || docs[j].doc_type != docs[i].doc_type
+                || docs[j].source_dir != docs[i].source_dir
+            {
                 continue;
             }
             let score = jaccard(&token_sets[i], &token_sets[j]);
@@ -95,7 +112,12 @@ pub fn consolidate(store: &Store, threshold: f64, dry_run: bool) -> Result<Conso
     }
 
     if !dry_run {
-        store.clear_supersessions()?;
+        // Reset only the scope this run owns: a single-layer run recomputes its
+        // own source_dir and leaves another layer's folds intact.
+        match source_dir {
+            Some(dir) => store.clear_supersessions_in(dir)?,
+            None => store.clear_supersessions()?,
+        };
         for (survivor_id, duplicate_id, _) in &merged {
             store.set_superseded(*duplicate_id, *survivor_id)?;
         }
@@ -175,5 +197,131 @@ mod tests {
         assert!(ts(Some("2026-06-13T10:00:00Z")) < ts(Some("2026-06-13T11:00:00Z")));
         assert_eq!(ts(None), i64::MIN);
         assert_eq!(ts(Some("not a date")), i64::MIN);
+    }
+
+    // A near-duplicate that lives in a different source_dir must never be folded:
+    // a private `memory/` doc and a root knowledge note are both type `note`, so
+    // only the source_dir guard keeps consolidate from crossing the two layers.
+    #[test]
+    fn consolidate_never_folds_across_source_dirs() {
+        use crate::model::ChunkDraft;
+        use crate::store::docs::DocUpsert;
+        use crate::store::Store;
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::init(dir.path(), "test-embedder", 4).unwrap();
+
+        let put = |slug: &str, source_dir: &str, updated: &str| {
+            let id = store
+                .upsert_page(
+                    &DocUpsert {
+                        slug,
+                        title: "Shared",
+                        doc_type: "note",
+                        source_dir,
+                        tags: &[],
+                        content_hash: slug,
+                        created_at: None,
+                        updated_at: Some(updated),
+                        aliases: &[],
+                    },
+                    updated,
+                )
+                .unwrap();
+            store
+                .replace_chunks_for_page(
+                    id,
+                    "Shared",
+                    &[ChunkDraft {
+                        heading_path: String::new(),
+                        text: "fact alpha beta gamma delta".into(),
+                    }],
+                    &[vec![0.0; 4]],
+                )
+                .unwrap();
+        };
+
+        // Two identical memory docs (newer survives) + one identical root note.
+        put("memory/m1", "memory", "2026-06-13T00:00:00Z");
+        put("memory/m2", "memory", "2026-06-14T00:00:00Z");
+        put("rootnote", "", "2026-06-15T00:00:00Z");
+
+        let report = consolidate(&store, 0.85, false, None).unwrap();
+        // Exactly one fold — both ends inside `memory/`; the root note is untouched
+        // even though its text is identical, because its source_dir differs.
+        assert_eq!(report.merged.len(), 1, "only the same-source_dir pair folds");
+        let p = &report.merged[0];
+        assert_eq!(p.survivor, "memory/m2");
+        assert_eq!(p.duplicate, "memory/m1");
+        assert!(
+            !report
+                .merged
+                .iter()
+                .any(|m| m.survivor == "rootnote" || m.duplicate == "rootnote"),
+            "a root knowledge note must never fold with a memory doc"
+        );
+    }
+
+    // A source_dir-scoped run folds ONLY that layer: pointed at `memory`, it folds
+    // the memory near-dupes and never looks at entities — the safety the automated
+    // post-turn hook relies on so hand-authored entities are never auto-hidden.
+    #[test]
+    fn consolidate_scoped_to_source_dir_ignores_other_layers() {
+        use crate::model::ChunkDraft;
+        use crate::store::docs::DocUpsert;
+        use crate::store::Store;
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::init(dir.path(), "test-embedder", 4).unwrap();
+
+        let put = |slug: &str, source_dir: &str, doc_type: &str, updated: &str, body: &str| {
+            let id = store
+                .upsert_page(
+                    &DocUpsert {
+                        slug,
+                        title: "T",
+                        doc_type,
+                        source_dir,
+                        tags: &[],
+                        content_hash: slug,
+                        created_at: None,
+                        updated_at: Some(updated),
+                        aliases: &[],
+                    },
+                    updated,
+                )
+                .unwrap();
+            store
+                .replace_chunks_for_page(
+                    id,
+                    "T",
+                    &[ChunkDraft {
+                        heading_path: String::new(),
+                        text: body.into(),
+                    }],
+                    &[vec![0.0; 4]],
+                )
+                .unwrap();
+        };
+
+        // Two near-duplicate entities (would fold at 0.85 if scanned) + two
+        // near-duplicate memory docs.
+        put("entities/e1", "entities", "concept", "2026-06-13T00:00:00Z", "alpha beta gamma");
+        put("entities/e2", "entities", "concept", "2026-06-14T00:00:00Z", "alpha beta gamma");
+        put("memory/m1", "memory", "note", "2026-06-13T00:00:00Z", "delta epsilon zeta");
+        put("memory/m2", "memory", "note", "2026-06-14T00:00:00Z", "delta epsilon zeta");
+
+        let report = consolidate(&store, 0.85, false, Some("memory")).unwrap();
+        assert_eq!(report.scanned, 2, "only memory/ docs were scanned");
+        assert_eq!(report.merged.len(), 1, "only the memory pair folds");
+        assert_eq!(report.merged[0].survivor, "memory/m2");
+        assert_eq!(report.merged[0].duplicate, "memory/m1");
+        assert!(
+            !report
+                .merged
+                .iter()
+                .any(|m| m.survivor.starts_with("entities/") || m.duplicate.starts_with("entities/")),
+            "a memory-scoped run must never fold an entity"
+        );
     }
 }

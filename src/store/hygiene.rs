@@ -19,6 +19,10 @@ pub struct DocText {
     pub id: i64,
     pub slug: String,
     pub doc_type: String,
+    /// Top-level folder the doc lives under (memory/, entities/, …; empty for a
+    /// root note). consolidate folds only within one source_dir so a private
+    /// memory can never be folded into a knowledge note or vice versa.
+    pub source_dir: String,
     pub updated_at: Option<String>,
     /// Title + every chunk's text, joined — the doc's full searchable surface.
     pub text: String,
@@ -30,7 +34,7 @@ impl Store {
     /// supersession from scratch, so it needs the complete live set each run.
     pub fn live_doc_texts(&self) -> Result<Vec<DocText>> {
         let mut stmt = self.conn.prepare(
-            "SELECT p.id, p.slug, p.doc_type, p.updated_at,
+            "SELECT p.id, p.slug, p.doc_type, p.source_dir, p.updated_at,
                     p.title || ' ' || COALESCE(GROUP_CONCAT(c.text, ' '), '')
              FROM docs p
              LEFT JOIN chunks c ON c.doc_id = p.id
@@ -44,8 +48,9 @@ impl Store {
                     id: r.get(0)?,
                     slug: r.get(1)?,
                     doc_type: r.get(2)?,
-                    updated_at: r.get(3)?,
-                    text: r.get(4)?,
+                    source_dir: r.get(3)?,
+                    updated_at: r.get(4)?,
+                    text: r.get(5)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -59,6 +64,17 @@ impl Store {
         Ok(self.conn.execute(
             "UPDATE docs SET superseded_by = NULL WHERE superseded_by IS NOT NULL",
             [],
+        )?)
+    }
+
+    /// Clear auto-supersessions only for docs under one `source_dir`, so a
+    /// single-layer consolidate run recomputes its own scope without disturbing
+    /// folds another layer set. Returns how many rows were reset.
+    pub fn clear_supersessions_in(&self, source_dir: &str) -> Result<usize> {
+        Ok(self.conn.execute(
+            "UPDATE docs SET superseded_by = NULL
+             WHERE superseded_by IS NOT NULL AND source_dir = ?1",
+            params![source_dir],
         )?)
     }
 
