@@ -19,6 +19,13 @@ pub struct Doc {
     /// `Some` => a near-duplicate hidden from retrieval but kept for history.
     #[serde(default)]
     pub superseded_by: Option<i64>,
+    /// Recall tracking: how many times this doc was surfaced into an agent's
+    /// recall context (bumped via `recall-bump`, never reset by `sync`).
+    #[serde(default)]
+    pub recall_count: i64,
+    /// When this doc was last recalled (RFC3339), or `None` if never.
+    #[serde(default)]
+    pub last_recalled_at: Option<String>,
 }
 
 /// Parsed YAML frontmatter. Every field is optional and parsed leniently:

@@ -33,6 +33,8 @@ fn row_to_doc(r: &rusqlite::Row) -> rusqlite::Result<Doc> {
         synced_at: r.get("synced_at")?,
         deleted_at: r.get("deleted_at")?,
         superseded_by: r.get("superseded_by")?,
+        recall_count: r.get("recall_count")?,
+        last_recalled_at: r.get("last_recalled_at")?,
     })
 }
 
@@ -110,6 +112,24 @@ impl Store {
                 row_to_doc,
             )
             .optional()?)
+    }
+
+    /// Bump the recall counter for each live doc addressed by slug: increments
+    /// `recall_count` and sets `last_recalled_at = now`. Runtime state, so it is
+    /// deliberately NOT touched by `sync` (upsert only sets frontmatter-derived
+    /// columns). Unknown/deleted slugs are silently skipped. Returns the number
+    /// of rows updated.
+    pub fn bump_recall(&self, slugs: &[String], now: &str) -> Result<usize> {
+        let mut updated = 0usize;
+        for slug in slugs {
+            updated += self.conn.execute(
+                "UPDATE docs
+                 SET recall_count = recall_count + 1, last_recalled_at = ?2
+                 WHERE slug = ?1 AND deleted_at IS NULL",
+                params![slug, now],
+            )?;
+        }
+        Ok(updated)
     }
 
     /// Resolve a name to a doc via exact slug, then case-insensitive title,

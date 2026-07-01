@@ -107,6 +107,14 @@ pub enum Command {
         #[command(subcommand)]
         action: ContradictionAction,
     },
+    /// Bump the recall counter for one or more docs (by slug): records that a
+    /// doc was actually surfaced into an agent's recall context. Feeds the Auto
+    /// Dream prune phase. Runtime state — never reset by `sync`.
+    RecallBump {
+        /// Slugs of the docs that were recalled (one or more)
+        #[arg(required = true)]
+        slugs: Vec<String>,
+    },
     /// Knowledge store statistics
     Stats,
     /// Run as a standalone REST API server

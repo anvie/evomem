@@ -103,6 +103,13 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     // tables come from the CREATE-IF-NOT-EXISTS DDL above; only added columns
     // need a guarded ALTER (SQLite has no `ADD COLUMN IF NOT EXISTS`).
     add_column_if_missing(conn, "docs", "superseded_by", "INTEGER REFERENCES docs(id)")?;
+    // Recall tracking (agent-memory-layers): how many times a doc was actually
+    // surfaced into an agent's recall context, and when last. Runtime state —
+    // NOT projected from frontmatter, so `sync`'s upsert (which only SETs the
+    // frontmatter-derived columns) never resets these. Feeds the Auto Dream
+    // prune phase ("stale + never recalled" → drop candidate).
+    add_column_if_missing(conn, "docs", "recall_count", "INTEGER NOT NULL DEFAULT 0")?;
+    add_column_if_missing(conn, "docs", "last_recalled_at", "TEXT")?;
     conn.execute(
         "INSERT INTO meta(key, value) VALUES ('schema_version', ?1)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",

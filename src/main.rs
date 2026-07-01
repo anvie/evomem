@@ -28,9 +28,10 @@ fn main() -> anyhow::Result<()> {
             | Command::Serve { .. }
             | Command::Validate { .. }
             | Command::Consolidate { .. }
+            | Command::RecallBump { .. }
             | Command::Contradiction { .. } => {
                 anyhow::bail!(
-                    "`init`, `serve`, `validate`, `consolidate`, and `contradiction` run locally; drop --server for them"
+                    "`init`, `serve`, `validate`, `consolidate`, `recall-bump`, and `contradiction` run locally; drop --server for them"
                 )
             }
             Command::Sync => {
@@ -145,6 +146,8 @@ fn main() -> anyhow::Result<()> {
                     serde_json::to_string_pretty(&serde_json::json!({
                         "slug": doc.slug, "title": doc.title, "type": doc.doc_type,
                         "tags": doc.tags, "updated_at": doc.updated_at, "content": content,
+                        "recall_count": doc.recall_count,
+                        "last_recalled_at": doc.last_recalled_at,
                     }))?
                 );
             } else {
@@ -166,6 +169,21 @@ fn main() -> anyhow::Result<()> {
             let report =
                 hygiene::consolidate(&store, *threshold, *dry_run, source_dir.as_deref())?;
             emit(cli.json, &report, render_consolidate)?;
+        }
+        Command::RecallBump { slugs } => {
+            let store = open(knowledge_root, &embedder)?;
+            let now = chrono::Utc::now().to_rfc3339();
+            let bumped = store.bump_recall(slugs, &now)?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "requested": slugs.len(), "bumped": bumped, "at": now,
+                    }))?
+                );
+            } else {
+                println!("recall-bump: {bumped}/{} doc(s) updated", slugs.len());
+            }
         }
         Command::Contradiction { action } => {
             let store = open(knowledge_root, &embedder)?;
